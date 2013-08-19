@@ -47,10 +47,11 @@
    #:response-code
    #:response-status
    #:response-headers
-   #:response-body
+   #:response-url
    
    ;; macros
    #:with-http-request
+   #:with-url
 
    ;; helper functions
    #:http-head
@@ -77,7 +78,7 @@
   ((code    :initarg :code    :accessor response-code)
    (status  :initarg :status  :accessor response-status)
    (headers :initarg :headers :accessor response-headers)
-   (body    :initarg :body    :accessor response-body))
+   (url     :initarg :url     :accessor response-url))
   (:documentation "The response from a request to an HTTP server."))
 
 (defmethod print-object ((url url) stream)
@@ -184,6 +185,15 @@
            ;; execute the body
            (progn ,@body))))))
 
+(defmacro with-url ((url url-expr) &body body)
+  "Parse a URL if necessary, bind it, and execute a body."
+  (let ((p (gensym)))
+    `(let ((,p ,url-expr))
+       (let ((,url (if (eq (type-of ,p) 'url)
+                       ,p
+                     (parse-url ,p))))
+         (progn ,@body)))))
+
 (defun parse-url (url)
   "Parse a URL and return."
   (let ((spec (parse #'url-parser (tokenize #'url-lexer url))))
@@ -210,6 +220,7 @@
     (make-instance 'response
                    :code code
                    :status status
+                   :url nil
                    :headers (loop :for header := (read-response-header http)
                                   :while header
                                   :collect header))))
@@ -221,15 +232,18 @@
           :while line
           :do (write-line line s))))
 
+(defun http-head (url &key headers)
+  "Create a HEAD request for a URL, send it, return the response."
+  (with-url (url url)
+    (let ((req (make-instance 'request :method :head :headers headers :url url)))
+      (with-http-request (http req)
+        (read-http-response http)))))
+
 (defun http-get (url &key headers)
   "Create a request from a URL, send it, and read the response."
-  (let ((req (make-instance 'request
-                            :method :get
-                            :headers headers
-                            :url (parse-url url))))
-    (with-http-request (http req)
-      (let ((response (read-http-response http)))
-        (with-slots (code status headers)
-            response
-          (when (<= 200 code 299)
-            (values code status headers (read-http-body http))))))))
+  (with-url (url url)
+    (let ((req (make-instance 'request :method :get :headers headers :url url)))
+      (with-http-request (http req)
+        (let ((resp (read-http-response http)))
+          (values resp (when (<= 200 (response-code resp) 299)
+                         (read-http-body http))))))))
