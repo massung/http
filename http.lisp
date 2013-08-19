@@ -24,10 +24,11 @@
    #:response
    #:url
 
-   ;; utility functions
+   ;; url helpers
    #:parse-url
+   #:with-url
 
-   ;; functions
+   ;; http stream functions
    #:read-http-response
    #:read-http-body
 
@@ -42,20 +43,20 @@
    #:request-url
    #:request-method
    #:request-headers
+   #:request-data
 
    ;; response accessors
    #:response-code
    #:response-status
    #:response-headers
-   #:response-url
-   
-   ;; macros
-   #:with-http-request
-   #:with-url
+   #:response-body
 
    ;; helper functions
+   #:http-perform
    #:http-head
    #:http-get
+   #:http-delete
+   #:http-put
    #:http-post))
 
 (in-package :http)
@@ -70,15 +71,16 @@
 
 (defclass request ()
   ((url     :initarg :url     :accessor request-url)
+   (method  :initarg :method  :accessor request-method)
    (headers :initarg :headers :accessor request-headers :initform nil)
-   (method  :initarg :method  :accessor request-method  :initform :get))
+   (data    :initarg :data    :accessor request-data    :initform nil))
   (:documentation "A request for a URL from an HTTP server."))
 
 (defclass response ()
   ((code    :initarg :code    :accessor response-code)
    (status  :initarg :status  :accessor response-status)
    (headers :initarg :headers :accessor response-headers)
-   (url     :initarg :url     :accessor response-url))
+   (body    :initarg :body    :accessor response-body))
   (:documentation "The response from a request to an HTTP server."))
 
 (defmethod print-object ((url url) stream)
@@ -91,9 +93,9 @@
 (defmethod print-object ((req request) stream)
   "Output an HTTP request to a stream."
   (print-unreadable-object (req stream :type t)
-    (with-slots (url method)
-        req
-      (format stream "~a \"~a://~a~a\"" method (url-scheme url) (url-domain url) (url-path url)))))
+    (with-slots (scheme domain path)
+        (request-url req)
+      (format stream "~a \"~a://~a~a\"" (request-method req) scheme domain path))))
 
 (defmethod print-object ((resp response) stream)
   "Output an HTTP response to a stream."
@@ -101,6 +103,11 @@
     (with-slots (code status)
         resp
       (format stream "~a ~s" code status))))
+
+(defparameter *status-re* (compile-re "^HTTP/[^%s]+%s+(%d+)%s+([^%n]+)")
+  "Pattern for parsing a response status code and message.")
+(defparameter *header-re* (compile-re "^([^:]+):%s*([^%n]*)")
+  "Pattern for parsing a response header line.")
 
 (deflexer url-lexer
   ("^([^:]+)://"              (values :scheme $1))
@@ -152,37 +159,49 @@
   ((path)
    `(:path "/")))
 
-(defmacro with-http-request ((http req &rest tcp-socket-opts) &body body)
+(defmacro with-http-request ((http request &rest tcp-socket-opts) &body body)
   "Send a simple HTTP request to a server."
   (let ((auth (gensym "auth"))
         (domain (gensym "domain"))
         (port (gensym "port"))
         (path (gensym "path"))
         (header (gensym "header"))
-        (request (gensym "request")))
-    `(let ((,request ,req))
+        (headers (gensym "headers"))
+        (req (gensym "req")))
+    `(let ((,req ,request))
        (with-slots ((,domain domain) (,port port) (,path path) (,auth auth))
-           (request-url ,request)
+           (request-url ,req)
          (with-open-stream (,http (open-tcp-stream ,domain ,port ,@tcp-socket-opts))
-           (format ,http "~a ~a HTTP/1.1~c~c" (request-method ,request) ,path #\return #\linefeed)
-           
-           ;; send the host and force the server to close the connection
-           (format ,http "Host: ~a~c~c" ,domain #\return #\linefeed)
-           (format ,http "Connection: close~c~c" #\return #\linefeed)
+           (format ,http "~a ~a HTTP/1.1~c~c" (request-method ,req) ,path #\return #\linefeed)
 
-           ;; send the auth header
-           (when ,auth
-             (format ,http "Authorization: ~a~c~c" (basic-auth-string ,auth) #\return #\linefeed))
+           ;; send all request headers
+           (let ((,headers (request-headers ,req)))
+             (push (list "Host" ,domain) ,headers)
+             (push (list "Connection" "close") ,headers)
 
-           ;; send the other headers
-           (dolist (,header (request-headers ,request))
-             (format ,http "~a: ~a~c~c" (first ,header) (second ,header) #\return #\linefeed))
+             ;; content length
+             (when (request-data ,req)
+               (push (list "Content-Length" (length (request-data ,req))) ,headers))
+
+             ;; basic auth
+             (when ,auth
+               (push (list "Authorization" (basic-auth-string ,auth)) ,headers))
+
+             ;; write the request headers
+             (dolist (,header ,headers)
+               (format ,http "~a: ~a~c~c" (first ,header) (second ,header) #\return #\linefeed)))
 
            ;; complete the request
            (format ,http "~c~c" #\return #\linefeed)
+
+           ;; write the data in the body (if there is any)
+           (when (request-data ,req)
+             (write-sequence (request-data ,req) ,http))
+
+           ;; send it
            (force-output ,http)
            
-           ;; execute the body
+           ;; wait for a response
            (progn ,@body))))))
 
 (defmacro with-url ((url url-expr) &body body)
@@ -203,25 +222,25 @@
   "Create the value for an Authorization header."
   (format nil "Basic ~a" userpass))
 
-(defun read-response-status (http)
+(defun read-http-status (http)
   "Parse the line and parse it. Return the code and value."
-  (with-re-match (match (match-re "^HTTP/[^%s]+%s+(%d+)%s+([^%n]+)" (read-line http)))
+  (with-re-match (match (match-re *status-re* (read-line http)))
     (values (parse-integer $1) $2)))
 
-(defun read-response-header (http)
+(defun read-http-header (http)
   "Parse a header line. Return the key and value."
-  (with-re-match (match (match-re "^([^:]+):%s*([^%n]*)" (read-line http)))
+  (with-re-match (match (match-re *header-re* (read-line http)))
     (list $1 $2)))
 
 (defun read-http-response (http)
   "Read a response string from an HTTP socket stream and parse it."
   (multiple-value-bind (code status)
-      (read-response-status http)
+      (read-http-status http)
     (make-instance 'response
                    :code code
                    :status status
-                   :url nil
-                   :headers (loop :for header := (read-response-header http)
+                   :body nil
+                   :headers (loop :for header := (read-http-header http)
                                   :while header
                                   :collect header))))
 
@@ -232,31 +251,61 @@
           :while line
           :do (write-line line s))))
 
-(defun http-head (url &key headers)
-  "Create a HEAD request for a URL, send it, return the response."
+(defun http-perform (req &key read-body follow-redirect)
+  "Perform a generic HTTP request, return the request and body."
+  (with-http-request (http req)
+    (let ((resp (read-http-response http)))
+      (cond
+       ;; success!
+       ((<= 200 (response-code resp) 299)
+        (prog1
+            resp
+          (when read-body
+            (setf (response-body resp) (read-http-body http)))))
+           
+       ;; redirected, reload at the new location
+       ((<= 300 (response-code resp) 399)
+        (let ((location (assoc "Location" (response-headers resp) :test #'string=)))
+          (if (or (null follow-redirect)
+                  (null location))
+              resp
+            (with-url (url (second location))
+              (let ((req (make-instance 'request
+                                        :url url
+                                        :method (request-method req)
+                                        :headers (request-headers req)
+                                        :data (request-data req))))
+                (http-perform req :read-body read-body))))))
+       
+       ;; failure
+       (t resp)))))
+
+(defun http-head (url &key headers follow-redirect)
+  "Perform a HEAD request for a URL, return the response."
   (with-url (url url)
-    (let ((req (make-instance 'request :method :head :headers headers :url url)))
-      (with-http-request (http req)
-        (read-http-response http)))))
+    (let ((req (make-instance 'request :url url :method "HEAD" :headers headers)))
+      (http-perform req :follow-redirect follow-redirect))))
 
-(defun http-get (url &key headers follow-redirects)
-  "Create a request from a URL, send it, and read the response."
+(defun http-get (url &key headers follow-redirect)
+  "Perform a GET request for a URL, return the response and body."
   (with-url (url url)
-    (let ((req (make-instance 'request :method :get :headers headers :url url)))
-      (with-http-request (http req)
-        (let ((resp (read-http-response http)))
-          (cond
-           ;; success, read body
-           ((<= 200 (response-code resp) 299)
-            (values resp (read-http-body http)))
+    (let ((req (make-instance 'request :url url :method "GET" :headers headers)))
+      (http-perform req :follow-redirect follow-redirect :read-body t))))
 
-           ;; follow redirects
-           ((<= 300 (response-code resp) 399)
-            (let ((location (assoc "Location" (response-headers resp) :test #'string=)))
-              (if (or (null follow-redirects)
-                      (null location))
-                  resp
-                (http-get (second location) :headers headers :follow-redirects t))))
+(defun http-delete (url &key headers)
+  "Perform a DELETE request for a URL, return the response."
+  (with-url (url url)
+    (let ((req (make-instance 'request :url url :method "DELETE" :headers headers)))
+      (http-perform req))))
 
-           ;; failure
-           (t resp)))))))
+(defun http-put (url &key headers data)
+  "Perform a PUT request for a URL, return the response."
+  (with-url (url url)
+    (let ((req (make-instance 'request :url url :method "PUT" :headers headers :data data)))
+      (http-perform req :read-body t))))
+
+(defun http-post (url &key headers data)
+  "Perform a POST request for a URL, return the response."
+  (with-url (url url)
+    (let ((req (make-instance 'request :url url :method "POST" :headers headers :data data)))
+      (http-perform req :read-body t))))

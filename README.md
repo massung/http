@@ -16,14 +16,14 @@ Once you have a URL, you can create a request.
 	CL-USER > (make-instance 'request :url * :method :get)
 	#<REQUEST GET "http://www.google.com/">
 	
-Next, the `with-http-request` macro opens a TCP socket to the remote server and sends a request. It then allows you to execute a body of code for the response.
+Next, the `http-perform` function will issue the request to the server and return the response.
 
-	CL-USER > (with-http-request (http *) (read-http-response http))
+	CL-USER > (http-perform * :read-body t)
 	#<RESPONSE 200 "OK">
 	
-Finally, since you know the response was OK, you can finish everything up by reading the body from the socket. The body is read separate from the response, because sometimes you won't care (e.g. a redirect)... and why waste resources?
+The body was optionally read, because sometimes you won't care (e.g. a redirect)... and why waste resources?
 
-	CL-USER > (read-http-body http)
+	CL-USER > (response-body *)
 	"<!doctype html><html>...</html>"
 
 ## Even Quicker?
@@ -31,32 +31,38 @@ Finally, since you know the response was OK, you can finish everything up by rea
 While that was an overview of all the utility functions and objects to get the contents of a URL, the `http` package also nicely wraps most of them up for you with various helper functions:
 
 	;; perform a HEAD request
-	(http-head url &key headers) ;=> response
+	(http-head url &key headers follow-redirect)
 
 	;; perform a GET request
-	(http-get url &key headers follow-redirects) ;=> response body
+	(http-get url &key headers follow-redirect)
 	
 	;; perform a PUT request
-	(http-put url data &key headers) ;=> response body
+	(http-put url &key data headers)
 	
 	;; perform a POST request
-	(http-post url data &key headers) ;=> response body
+	(http-post url &key data headers)
 
 	;; perform a DELETE request
-	(http-delete url &key headers) ;=> response
+	(http-delete url &key headers)
 
-All the `http-` helper functions use a `with-url` macro, which allows you to pass either a `url` object or a string, which will be parsed on-demand.
+All the `http-` helper functions use the `with-url` macro, which allows you to pass either a `url` object or a string, which will be parsed on-demand.
 
 	(with-url ((url url-expr) &body body)
 
 The optional `headers` should be an associative list of key/value pairs that will be sent with the request. The `http` package will already take care of any obvious headers for you (e.g. Host, Connection, and Authorization).
 
-For GET requests, `follow-redirects` signals that if the resource has moved (response codes in the 300's). If it is a positive integer, then only that many follows will occur. If it is `t` then it will keep following the resource until it finds it or fails.
+For HEAD and GET requests, `follow-redirect` signals that if the resource has moved (response codes in the 300's) that an additional `http-perform` should be taken to follow the resource to its new location. If the resource has continued to move, it will be up to you to test and follow.
 
-Both PUT and POST requests have a `data` argument, which is what is sent in the body of the request. *At this time there is no support for multi-part posts*.
-
-	CL-USER > (http-get "google.com" :follow-redirects t)
+	CL-USER > (http-get "google.com" :follow-redirect t)
 	#<RESPONSE 200 "OK">
-	"<!doctype html><html>...</html>"
 
-Only GET, PUT, and POST operations will read the response body, and only if the `response-code` returned is a success (200-299). Otherwise only the `response` is returned.
+Both PUT and POST requests have an optional `data` argument, which is what is sent in the body of the request. *At this time there is no support for multi-part posts*.
+
+	CL-USER > (http-post "httpbin.org/post" :data "Echo")
+	#<RESPONSE 200 "OK">
+
+The `http-get`, `http-put`, and `http-post` functions will all send `:read-body t` to `http-perform`. The body is only read if the response code is a success (200-299).
+
+## Additional Utilities
+
+TODO: url-encode, url-decode, base64-encode, base64-decode, ...
