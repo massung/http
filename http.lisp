@@ -239,11 +239,24 @@
       (with-http-request (http req)
         (read-http-response http)))))
 
-(defun http-get (url &key headers)
+(defun http-get (url &key headers follow-redirects)
   "Create a request from a URL, send it, and read the response."
   (with-url (url url)
     (let ((req (make-instance 'request :method :get :headers headers :url url)))
       (with-http-request (http req)
         (let ((resp (read-http-response http)))
-          (values resp (when (<= 200 (response-code resp) 299)
-                         (read-http-body http))))))))
+          (cond
+           ;; success, read body
+           ((<= 200 (response-code resp) 299)
+            (values resp (read-http-body http)))
+
+           ;; follow redirects
+           ((<= 300 (response-code resp) 399)
+            (let ((location (assoc "Location" (response-headers resp) :test #'string=)))
+              (if (or (null follow-redirects)
+                      (null location))
+                  resp
+                (http-get (second location) :headers headers :follow-redirects t))))
+
+           ;; failure
+           (t resp)))))))

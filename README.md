@@ -28,22 +28,26 @@ Finally, since you know the response was OK, you can finish everything up by rea
 
 ## Even Quicker?
 
-While that was an overview of all the utility functions and objects to get the contents of a URL, the `http` package also nicely wraps most of them up for you with various `http-` helper functions:
+While that was an overview of all the utility functions and objects to get the contents of a URL, the `http` package also nicely wraps most of them up for you with various helper functions:
 
 	;; perform a HEAD request
-	(http-head url &key headers follow-redirects) ;=> response
+	(http-head url &key headers) ;=> response
 
 	;; perform a GET request
-	(http-get url &key headers) ;=> response body
+	(http-get url &key headers follow-redirects) ;=> response body
 	
 	;; perform a PUT request
-	(http-put url data &key headers) ;=> response
+	(http-put url data &key headers) ;=> response body
 	
 	;; perform a POST request
-	(http-post url data &key headers) ;=> response
+	(http-post url data &key headers) ;=> response body
 
 	;; perform a DELETE request
 	(http-delete url &key headers) ;=> response
+
+All the `http-` helper functions use a `with-url` macro, which allows you to pass either a `url` object or a string, which will be parsed on-demand.
+
+	(with-url ((url url-expr) &body body)
 
 The optional `headers` should be an associative list of key/value pairs that will be sent with the request. The `http` package will already take care of any obvious headers for you (e.g. Host, Connection, and Authorization).
 
@@ -55,4 +59,4 @@ Both PUT and POST requests have a `data` argument, which is what is sent in the 
 	#<RESPONSE 200 "OK">
 	"<!doctype html><html>...</html>"
 
-If the `response-code` returned is not a success code (200-299) then the body is not read.
+Only GET, PUT, and POST operations will read the response body, and only if the `response-code` returned is a success (200-299). Otherwise only the `response` is returned.
