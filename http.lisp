@@ -31,6 +31,7 @@
 
    ;; request functions
    #:http-perform
+   #:http-follow
    #:http-head
    #:http-get
    #:http-delete
@@ -54,7 +55,8 @@
    #:response-code
    #:response-status
    #:response-headers
-   #:response-body))
+   #:response-body
+   #:response-request))
 
 (in-package :http)
 
@@ -77,7 +79,8 @@
   ((code    :initarg :code    :accessor response-code)
    (status  :initarg :status  :accessor response-status)
    (headers :initarg :headers :accessor response-headers)
-   (body    :initarg :body    :accessor response-body))
+   (body    :initarg :body    :accessor response-body)
+   (request :initarg :request :accessor response-request))
   (:documentation "The response from a request to an HTTP server."))
 
 (defmethod print-object ((url url) stream)
@@ -186,38 +189,6 @@
   "Create the basic auth value for the Authorization header."
   (format nil "Basic ~a" (base64-encode login)))
 
-(defun send-http-request (http req)
-  "Send a request to a server, return the response."
-  (with-slots (url method headers data)
-      req
-    (with-slots (auth domain path)
-        url
-      (format http "~a ~a HTTP/1.1~c~c" method path #\return #\linefeed)
-
-      ;; send headers
-      (format http "Host: ~a~c~c" domain #\return #\linefeed)
-      (format http "Connection: close~c~c" #\return #\linefeed)
-
-      ;; optionally sent
-      (when data
-        (format http "Content-Length: ~a~c~c" (length data) #\return #\linefeed))
-      (when auth
-        (format http "Authorization: ~a~c~c" (basic-auth-string auth) #\return #\linefeed))
-
-      ;; user headers
-      (dolist (header headers)
-        (format http "~a: ~a~c~c" (first header) (second header) #\return #\linefeed))
-
-      ;; complete the request
-      (format http "~c~c" #\return #\linefeed)
-
-      ;; write optional data to the body
-      (when data
-        (write-sequence data http))
-
-      ;; send all data
-      (force-output http))))
-
 (defun read-http-status (http)
   "Parse the line and parse it. Return the code and value."
   (with-re-match (match (match-re *status-re* (read-line http)))
@@ -238,11 +209,12 @@
             :while (plusp bytes-read)
             :do (write-sequence seq s :end bytes-read)))))
 
-(defun read-http-response (http)
+(defun read-http-response (http req)
   "Read a response string from an HTTP socket stream and parse it."
   (multiple-value-bind (code status)
       (read-http-status http)
     (make-instance 'response
+                   :request req
                    :code code
                    :status status
                    :headers (read-http-headers http)
@@ -250,11 +222,52 @@
 
 (defun http-perform (req)
   "Perform a generic HTTP request, return the request and body."
-  (with-slots (domain port)
-      (request-url req)
-    (with-open-stream (http (open-tcp-stream domain port))
-      (send-http-request http req)
-      (read-http-response http))))
+  (with-slots (url method headers data)
+      req
+    (with-slots (domain port path auth)
+        url
+      (with-open-stream (http (open-tcp-stream domain port))
+        (format http "~a ~a HTTP/1.1~c~c" method path #\return #\linefeed)
+
+        ;; send headers
+        (format http "Host: ~a~c~c" domain #\return #\linefeed)
+        (format http "Connection: close~c~c" #\return #\linefeed)
+
+        ;; optionally sent
+        (when data
+          (format http "Content-Length: ~a~c~c" (length data) #\return #\linefeed))
+        (when auth
+          (format http "Authorization: ~a~c~c" (basic-auth-string auth) #\return #\linefeed))
+
+        ;; user headers
+        (dolist (header headers)
+          (format http "~a: ~a~c~c" (first header) (second header) #\return #\linefeed))
+
+        ;; complete the request
+        (format http "~c~c" #\return #\linefeed)
+
+        ;; write optional data to the body
+        (when data
+          (write-sequence data http))
+
+        ;; send all data
+        (force-output http)
+
+        ;; return the response
+        (read-http-response http req)))))
+
+(defun http-follow (resp)
+  "Follow a reponse's redirection to a new resource location."
+  (with-slots (headers request)
+      resp
+    (let ((location (assoc "Location" headers :test #'string=)))
+      (when location
+        (with-url (url (second location))
+          (http-perform (make-instance 'request
+                                       :url url
+                                       :method (request-method request)
+                                       :headers (request-headers request)
+                                       :data (request-data request))))))))
 
 (defun http-head (url &key headers)
   "Perform a HEAD request for a URL, return the response."
