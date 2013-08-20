@@ -61,11 +61,13 @@
 (in-package :http)
 
 (defclass url ()
-  ((domain :initarg :domain :accessor url-domain)
-   (auth   :initarg :auth   :accessor url-auth   :initform nil)
-   (port   :initarg :port   :accessor url-port   :initform 80)
-   (scheme :initarg :scheme :accessor url-scheme :initform "http")
-   (path   :initarg :path   :accessor url-path   :initform "/"))
+  ((domain   :initarg :domain   :accessor url-domain)
+   (auth     :initarg :auth     :accessor url-auth     :initform nil)
+   (port     :initarg :port     :accessor url-port     :initform 80)
+   (scheme   :initarg :scheme   :accessor url-scheme   :initform "http")
+   (path     :initarg :path     :accessor url-path     :initform "/")
+   (query    :initarg :query    :accessor url-query    :initform nil)
+   (fragment :initarg :fragment :accessor url-fragment :initform nil))
   (:documentation "Universal Resource Locator."))
 
 (defclass request ()
@@ -83,19 +85,19 @@
    (request :initarg :request :accessor response-request))
   (:documentation "The response from a request to an HTTP server."))
 
-(defmethod print-object ((url url) stream)
+(defmethod print-object ((url url) s)
   "Output a URL to a stream."
-  (print-unreadable-object (url stream :type t)
+  (print-unreadable-object (url s :type t)
     (with-slots (scheme auth domain port path)
         url
-      (format stream "\"~a://~@[~a@~]~a~:[:~a~;~*~]~a\"" scheme auth domain (= port 80) port path))))
+      (format s "\"~a://~@[~a@~]~a~:[:~a~;~*~]~a\"" scheme auth domain (= port 80) port path))))
 
-(defmethod print-object ((req request) stream)
+(defmethod print-object ((req request) s)
   "Output an HTTP request to a stream."
-  (print-unreadable-object (req stream :type t)
+  (print-unreadable-object (req s :type t)
     (with-slots (scheme domain path)
         (request-url req)
-      (format stream "~a \"~a://~a~a\"" (request-method req) scheme domain path))))
+      (format s "~a \"~a://~a~a\"" (request-method req) scheme domain path))))
 
 (defmethod print-object ((resp response) stream)
   "Output an HTTP response to a stream."
@@ -117,7 +119,9 @@
 (deflexer url-lexer
   ("^([^:]+)://"              (values :scheme $1))
   ("([^:]+:[^@]+)@"           (values :auth $1))
-  ("/.*"                      (values :path $$))
+  ("/[^?#]*"                  (values :path $$))
+  ("%?[^#]*"                  (values :query $$))
+  ("#.*"                      (values :fragment $$))
   ("[%a%d%-]+"                (values :domain $$))
   ("%."                       (values :dot))
   (":(%d+)"                   (values :port (parse-integer $1))))
@@ -149,8 +153,16 @@
   ((port path) `(:port 80 ,@$1))
 
   ;; /index.html
-  ((path :path) `(:path ,$1))
-  ((path) `(:path "/")))
+  ((path :path query) `(:path ,$1 ,@$2))
+  ((path query) `(:path "/" ,@$1))
+
+  ;; ?q=value
+  ((query :query fragment) `(:query ,$1 ,@$2))
+  ((query fragment) $1)
+
+  ;; #anchor
+  ((fragment :fragment) `(:fragment ,$1))
+  ((fragment)) nil)
 
 (defmacro with-url ((url url-expr) &body body)
   "Parse a URL if necessary, bind it, and execute a body."
@@ -224,10 +236,10 @@
   "Perform a generic HTTP request, return the request and body."
   (with-slots (url method headers data)
       req
-    (with-slots (domain port path auth)
+    (with-slots (domain port path query auth)
         url
       (with-open-stream (http (open-tcp-stream domain port))
-        (format http "~a ~a HTTP/1.1~c~c" method path #\return #\linefeed)
+        (format http "~a ~a~@[~a~] HTTP/1.1~c~c" method path query #\return #\linefeed)
 
         ;; send headers
         (format http "Host: ~a~c~c" domain #\return #\linefeed)
