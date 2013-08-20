@@ -2,7 +2,7 @@
 
 The `HTTP` package is a dead-simple package used for performing simple HTTP requests and parsing the responses. It also can parse URLs, escape and unescape strings, and parse query strings.
 
-It makes heavy use of my [`re`](http://github.com/massung/re) and [`lexer`](http://www.github.com/massung/lexer) packages, so to understand some of the code you should start with those. But it really is simple.
+It makes heavy use of my [`re`](http://github.com/massung/re) and [`lexer`](http://www.github.com/massung/lexer) packages, so to understand some of the code you should start with those. But it really is simple. It also uses my [`base64`](http://github.com/massung/base64) package.
 
 ## Quickstart
 
@@ -34,7 +34,7 @@ Following a redirect is simply a matter of fetching the "Location" header in the
 	CL-USER > (http-follow *)
 	#<RESPONSE 200 "OK">
 
-*NOTE: If the response doesn't contain a new "Location" to follow, `nil` is returned.
+*NOTE: If the response doesn't contain a new "Location" to follow, `nil` is returned.*
 
 ## Even Quicker?
 

@@ -258,16 +258,17 @@
 
 (defun http-follow (resp)
   "Follow a reponse's redirection to a new resource location."
-  (with-slots (headers request)
-      resp
-    (let ((location (assoc "Location" headers :test #'string=)))
-      (when location
-        (with-url (url (second location))
-          (http-perform (make-instance 'request
-                                       :url url
-                                       :method (request-method request)
-                                       :headers (request-headers request)
-                                       :data (request-data request))))))))
+  (let ((req (let ((loc (assoc "Location" (response-headers resp) :test #'string=)))
+               (when loc
+                 (with-slots (method headers data)
+                     (response-request resp)
+                   (make-instance 'request
+                                  :method method
+                                  :headers headers
+                                  :data data
+                                  :url (parse-url (second loc))))))))
+    (when req
+      (http-perform req))))
 
 (defun http-head (url &key headers)
   "Perform a HEAD request for a URL, return the response."
