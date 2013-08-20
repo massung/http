@@ -28,6 +28,10 @@
    #:parse-url
    #:with-url
 
+   ;; url encoding
+   #:url-encode
+   #:url-decode
+
    ;; http stream functions
    #:read-http-response
    #:read-http-body
@@ -108,6 +112,11 @@
   "Pattern for parsing a response status code and message.")
 (defparameter *header-re* (compile-re "^([^:]+):%s*([^%n]*)")
   "Pattern for parsing a response header line.")
+
+(defconstant +reserved-chars+ '(#\% #\$ #\& #\+ #\, #\/ #\: #\; #\= #\? #\@)
+  "Reserved URL characters that *must* be encoded.")
+(defconstant +unwise-chars+ '(#\{ #\} #\| #\\ #\^ #\[ #\] #\`)
+  "Characters presenting a possibility of being misunderstood and should be encoded.")
 
 (deflexer url-lexer
   ("^([^:]+)://"              (values :scheme $1))
@@ -218,6 +227,42 @@
   (let ((spec (parse #'url-parser (tokenize #'url-lexer url))))
     (apply #'make-instance spec)))
 
+(defun escape-char-p (c)
+  "T if a character needs to be escaped in a URL."
+  (or (char< c #\!)
+      (char> c #\~)
+
+      ;; reserved and unsafe characters
+      (find c +unwise-chars+ :test #'char=)
+      (find c +reserved-chars+ :test #'char=)))
+
+(defun url-encode (string)
+  "Convert a string into a URL-encoded string."
+  (with-output-to-string (url)
+    (loop :for c :across string
+          :do (if (escape-char-p c)
+                  (if (char= c #\space)
+                      (princ #\+ url)
+                    (format url "%~16,2,'0r" (char-code c)))
+                (princ c url)))))
+
+(defun url-decode (url)
+  "Decode an encoded URL into a string. Returns NIL if malformed."
+  (with-output-to-string (string)
+    (with-input-from-string (s url)
+      (loop :for c := (read-char s nil nil)
+            :while c
+            :do (case c
+                  (#\+ (princ #\space string))
+                  (#\% (let ((c1 (read-char s nil nil))
+                             (c2 (read-char s nil nil)))
+                         (when (and c1 c2)
+                           (let ((code (+ (ash (- (char-code c1) 48) 4)
+                                          (ash (- (char-code c2) 48) 0))))
+                             (princ (code-char code) string)))))
+                  (otherwise
+                   (princ c string)))))))
+
 (defun basic-auth-string (userpass)
   "Create the value for an Authorization header."
   (format nil "Basic ~a" userpass))
@@ -262,7 +307,7 @@
             resp
           (when read-body
             (setf (response-body resp) (read-http-body http)))))
-           
+
        ;; redirected, reload at the new location
        ((<= 300 (response-code resp) 399)
         (let ((location (assoc "Location" (response-headers resp) :test #'string=)))
