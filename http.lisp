@@ -27,6 +27,7 @@
    ;; url helpers
    #:parse-url
    #:encode-url
+   #:print-url
    #:with-url
 
    ;; request functions
@@ -37,13 +38,16 @@
    #:http-delete
    #:http-put
    #:http-post
+   #:http-patch
 
    ;; url accessors
-   #:url-scheme
-   #:url-auth
    #:url-domain
    #:url-port
+   #:url-auth
+   #:url-scheme
    #:url-path
+   #:url-query
+   #:url-fragment
    
    ;; http request accessors
    #:request-url
@@ -62,9 +66,9 @@
 
 (defclass url ()
   ((domain   :initarg :domain   :accessor url-domain)
-   (auth     :initarg :auth     :accessor url-auth     :initform nil)
    (port     :initarg :port     :accessor url-port     :initform 80)
-   (scheme   :initarg :scheme   :accessor url-scheme   :initform "http")
+   (auth     :initarg :auth     :accessor url-auth     :initform nil)
+   (scheme   :initarg :scheme   :accessor url-scheme   :initform "http://")
    (path     :initarg :path     :accessor url-path     :initform "/")
    (query    :initarg :query    :accessor url-query    :initform nil)
    (fragment :initarg :fragment :accessor url-fragment :initform nil))
@@ -72,7 +76,7 @@
 
 (defclass request ()
   ((url     :initarg :url     :accessor request-url)
-   (method  :initarg :method  :accessor request-method)
+   (method  :initarg :method  :accessor request-method  :initform "GET")
    (headers :initarg :headers :accessor request-headers :initform nil)
    (data    :initarg :data    :accessor request-data    :initform nil))
   (:documentation "A request for a URL from an HTTP server."))
@@ -87,17 +91,12 @@
 
 (defmethod print-object ((url url) s)
   "Output a URL to a stream."
-  (print-unreadable-object (url s :type t)
-    (with-slots (scheme auth domain port path)
-        url
-      (format s "\"~a://~@[~a@~]~a~:[:~a~;~*~]~a\"" scheme auth domain (= port 80) port path))))
+  (print-unreadable-object (url s :type t) (format s "~s" (print-url url nil))))
 
 (defmethod print-object ((req request) s)
   "Output an HTTP request to a stream."
   (print-unreadable-object (req s :type t)
-    (with-slots (scheme domain path)
-        (request-url req)
-      (format s "~a \"~a://~a~a\"" (request-method req) scheme domain path))))
+    (format s "~a ~s" (request-method req) (print-url (request-url req) nil))))
 
 (defmethod print-object ((resp response) stream)
   "Output an HTTP response to a stream."
@@ -115,27 +114,29 @@
   "Reserved URL characters that *must* be encoded.")
 (defconstant +unwise-chars+ '(#\{ #\} #\| #\\ #\^ #\[ #\] #\`)
   "Characters presenting a possibility of being misunderstood and should be encoded.")
+(defconstant +url-format+ "~a~@[~a@~]~a~:[:~a~;~*~]~a~@[~a~]~@[~a~]"
+  "Format used to display all components of a URL.")
 
 (deflexer url-lexer
-  ("^([^:]+)://"              (values :scheme $1))
+  ("%."                       (values :dot))
+  ("^[^:]+://"                (values :scheme $$))
   ("([^:]+:[^@]+)@"           (values :auth $1))
   ("/[^?#]*"                  (values :path $$))
   ("%?[^#]*"                  (values :query $$))
   ("#.*"                      (values :fragment $$))
   ("[%a%d%-]+"                (values :domain $$))
-  ("%."                       (values :dot))
   (":(%d+)"                   (values :port (parse-integer $1))))
 
 (defparser url-parser
   ((start url) $1)
 
   ;; http://login:password@www.host.com:80/index.html
-  ((url scheme) (cons 'url $1))
+  ((url scheme) $1)
   ((url :error) (error "Invalid URL"))
 
   ;; http://
   ((scheme :scheme auth) `(:scheme ,$1 ,@$2))
-  ((scheme auth) `(:scheme "http" ,@$1))
+  ((scheme auth) `(:scheme "http://" ,@$1))
 
   ;; login:password@
   ((auth :auth domain) `(:auth ,$1 ,@$2))
@@ -174,9 +175,15 @@
          (progn ,@body)))))
 
 (defun parse-url (url)
-  "Parse a URL and return."
+  "Parse a URL and return. If URL is relative, set what it's relative to."
   (let ((spec (parse #'url-parser (tokenize #'url-lexer url))))
-    (apply #'make-instance spec)))
+    (apply #'make-instance (cons 'url spec))))
+
+(defun print-url (url &optional (s t))
+  "Outputs all parts of a URL to a stream."
+  (with-slots (scheme auth domain port path query fragment)
+      url
+    (format s +url-format+ scheme auth domain (= port 80) port path query fragment)))
 
 (defun escape-char-p (c)
   "T if a character needs to be escaped in a URL."
@@ -310,4 +317,10 @@
   "Perform a POST request for a URL, return the response."
   (with-url (url url)
     (let ((req (make-instance 'request :url url :method "POST" :headers headers :data data)))
+      (http-perform req))))
+
+(defun http-patch (url &key headers data)
+  "Perform a PATCH request for a URL, return the response."
+  (with-url (url url)
+    (let ((req (make-instance 'request :url url :method "PATCH" :headers headers :data data)))
       (http-perform req))))

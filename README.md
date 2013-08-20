@@ -13,7 +13,7 @@ After loading the package, the first step is to parse a URL.
 	
 Once you have a URL, you can create a `request` object.
 
-	CL-USER > (make-instance 'request :url * :method :get)
+	CL-USER > (make-instance 'request :url *)
 	#<REQUEST GET "http://www.google.com/">
 	
 Finally, `http-perform` will open a socket, issue the request to the server, and return a `response` object.
@@ -42,9 +42,10 @@ While that was an overview of what's going on under-the-hood, those three steps 
 
 	(http-head url &key headers)
 	(http-get url &key headers)
+	(http-delete url &key headers)
 	(http-put url &key headers data)
 	(http-post url &key headers data)
-	(http-delete url &key headers)
+	(http-patch url &key headers data)
 
 Each of these functions use the `with-url` macro, allowing you to pass either a `url` object or a string, which will be parsed.
 
@@ -54,7 +55,7 @@ The optional `headers` should be an associative list of key/value strings that w
 
 *NOTE: `http-perform` already takes care of any obvious headers that will need to be sent: Host, Connection, Content-Length, and Authorization.*
 
-Both PUT and POST requests have an optional `data` argument, which is what is sent in the body of the request. *At this time there is no support for multi-part posts*.
+PUT, POST, and PATCH requests have an optional `data` argument, which is what is sent in the body of the request. *At this time there is no support for multi-part posts*.
 
 ## Additional Utility Functions
 
