@@ -30,6 +30,9 @@
    #:print-url
    #:with-url
 
+   ;; data post body functions
+   #:make-query-string
+
    ;; request functions
    #:http-perform
    #:http-follow
@@ -114,7 +117,7 @@
   "Reserved URL characters that *must* be encoded.")
 (defconstant +unwise-chars+ '(#\{ #\} #\| #\\ #\^ #\[ #\] #\`)
   "Characters presenting a possibility of being misunderstood and should be encoded.")
-(defconstant +url-format+ "~a~@[~a@~]~a~:[:~a~;~*~]~a~@[~a~]~@[~a~]"
+(defconstant +url-format+ "~a~@[~a@~]~a~:[:~a~;~*~]~a~@[?~a~]~@[#~a~]"
   "Format used to display all components of a URL.")
 
 (deflexer url-lexer
@@ -122,8 +125,8 @@
   ("^[^:]+://"                (values :scheme $$))
   ("([^:]+:[^@]+)@"           (values :auth $1))
   ("/[^?#]*"                  (values :path $$))
-  ("%?[^#]*"                  (values :query $$))
-  ("#.*"                      (values :fragment $$))
+  ("%?([^#]*)"                (values :query $1))
+  ("#(.*)"                    (values :fragment $1))
   ("[%a%d%-]+"                (values :domain $$))
   (":(%d+)"                   (values :port (parse-integer $1))))
 
@@ -203,6 +206,14 @@
                       (princ #\+ url)
                     (format url "%~16,2,'0r" (char-code c)))
                 (princ c url)))))
+
+(defun make-query-string (params)
+  "Build a k=v&.. query string from an associative list, properly url-encoded."
+  (with-output-to-string (qs)
+    (loop :for p :in params :and i :from 0
+          :do (destructuring-bind (key value)
+                  p
+                (format qs "~:[~;&~]~a=~a" (plusp i) key (encode-url value))))))
 
 (defun basic-auth-string (login)
   "Create the basic auth value for the Authorization header."
