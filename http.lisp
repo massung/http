@@ -331,16 +331,14 @@
 
 (defun http-follow (resp)
   "Follow a reponse's redirection to a new resource location."
-  (let ((req (let ((loc (assoc "Location" (response-headers resp) :test #'string=)))
-               (when loc
-                 (with-slots (method headers data)
-                     (response-request resp)
-                   (make-instance 'request
-                                  :method method
-                                  :headers headers
-                                  :data data
-                                  :url (parse-url (second loc))))))))
-    (when req
+  (with-slots (request headers)
+      resp
+    (let ((req (with-header (loc "Location" headers :if-not-found (error "No \"Location\" header."))
+                 (make-instance 'request
+                                :url (parse-url loc)
+                                :method (request-method request)
+                                :headers (request-headers request)
+                                :data (request-data request)))))
       (http-perform req))))
 
 (defun http-head (url &key headers)
