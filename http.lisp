@@ -231,24 +231,36 @@
              (list $1 $2))))
     (loop :for header := (read-header) :while header :collect header)))
 
-(defun read-http-body (http)
+(defun read-http-body-chunked (http s)
+  "Read the rest of the response from the HTTP server using a chunked format."
+  (loop :for len := (parse-integer (read-line http) :radix 16 :junk-allowed t)
+        :while (plusp len)
+        :do (let ((seq (make-array len :element-type 'unsigned-byte :fill-pointer t)))
+              (write-sequence seq s :end (read-sequence seq http))
+              (read-line http))))
+
+(defun read-http-body (http headers)
   "Read the rest of the response from the HTTP server."
   (with-output-to-string (s)
-    (let ((seq (make-array 4000 :element-type 'unsigned-byte :fill-pointer t)))
-      (loop :for bytes-read := (read-sequence seq http)
-            :while (plusp bytes-read)
-            :do (write-sequence seq s :end bytes-read)))))
+    (let ((encoding (second (assoc "Transfer-Encoding" headers :test #'string=))))
+      (if (string= encoding "chunked")
+          (read-http-body-chunked http s)
+        (let ((seq (make-array 4000 :element-type 'unsigned-byte :fill-pointer t)))
+          (loop :for bytes-read := (read-sequence seq http)
+                :while (plusp bytes-read)
+                :do (write-sequence seq s :end bytes-read)))))))
 
 (defun read-http-response (http req)
   "Read a response string from an HTTP socket stream and parse it."
   (multiple-value-bind (code status)
       (read-http-status http)
-    (make-instance 'response
-                   :request req
-                   :code code
-                   :status status
-                   :headers (read-http-headers http)
-                   :body (read-http-body http))))
+    (let ((headers (read-http-headers http)))
+      (make-instance 'response
+                     :request req
+                     :code code
+                     :status status
+                     :headers headers
+                     :body (read-http-body http headers)))))
 
 (defun http-perform (req)
   "Perform a generic HTTP request, return the request and body."
