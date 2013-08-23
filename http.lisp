@@ -28,7 +28,10 @@
    #:parse-url
    #:encode-url
    #:print-url
+
+   ;; macros
    #:with-url
+   #:with-header
 
    ;; data post body functions
    #:make-query-string
@@ -177,6 +180,11 @@
                      (parse-url ,p))))
          (progn ,@body)))))
 
+(defmacro with-header ((value key headers &key if-not-found) &body body)
+  "Extract a value from an HTTP header assoc list."
+  `(let ((,value (or (second (assoc ,key ,headers :test #'string=)) ,if-not-found)))
+     (progn ,@body)))
+
 (defun parse-url (url)
   "Parse a URL and return. If URL is relative, set what it's relative to."
   (let ((spec (parse #'url-parser (tokenize #'url-lexer url))))
@@ -219,6 +227,31 @@
   "Create the basic auth value for the Authorization header."
   (format nil "Basic ~a" (base64-encode login)))
 
+(defun parse-chunked-string (string)
+  "Read a string in 'chunked' format (Transfer-Encoding) and return the actual contents."
+  (with-input-from-string (in string)
+    (with-output-to-string (s)
+      (loop :for len := (parse-integer (read-line in) :radix 16 :junk-allowed t)
+            :while (plusp len)
+            :do (let ((seq (make-array len :element-type 'unsigned-byte :fill-pointer t)))
+                  (write-sequence seq s :end (read-sequence seq in))
+                  (read-line in))))))
+
+(defun content-decode (body encoding)
+  "Given the content encoding type, decode the contents."
+  (cond
+   ((string= encoding "identity") (identity body))
+   (t
+    (error "Unsupported Content-Encoding: ~s" encoding))))
+
+(defun transfer-decode (body encoding)
+  "Given the transfer encoding type, decode the body."
+  (cond
+   ((string= encoding "chunked") (parse-chunked-string body))
+   ((string= encoding "identity") (identity body))
+   (t
+    (error "Unsupported Transfer-Encoding: ~s" encoding))))
+
 (defun read-http-status (http)
   "Parse the line and parse it. Return the code and value."
   (with-re-match (match (match-re *status-re* (read-line http)))
@@ -231,36 +264,34 @@
              (list $1 $2))))
     (loop :for header := (read-header) :while header :collect header)))
 
-(defun read-http-body-chunked (http s)
-  "Read the rest of the response from the HTTP server using a chunked format."
-  (loop :for len := (parse-integer (read-line http) :radix 16 :junk-allowed t)
-        :while (plusp len)
-        :do (let ((seq (make-array len :element-type 'unsigned-byte :fill-pointer t)))
-              (write-sequence seq s :end (read-sequence seq http))
-              (read-line http))))
-
-(defun read-http-body (http headers)
+(defun read-http-body (http)
   "Read the rest of the response from the HTTP server."
   (with-output-to-string (s)
-    (let ((encoding (second (assoc "Transfer-Encoding" headers :test #'string=))))
-      (if (string= encoding "chunked")
-          (read-http-body-chunked http s)
-        (let ((seq (make-array 4000 :element-type 'unsigned-byte :fill-pointer t)))
-          (loop :for bytes-read := (read-sequence seq http)
-                :while (plusp bytes-read)
-                :do (write-sequence seq s :end bytes-read)))))))
+    (let ((seq (make-array 4000 :element-type 'unsigned-byte :fill-pointer t)))
+      (loop :for bytes-read := (read-sequence seq http)
+            :while (plusp bytes-read)
+            :do (write-sequence seq s :end bytes-read)))))
 
 (defun read-http-response (http req)
   "Read a response string from an HTTP socket stream and parse it."
   (multiple-value-bind (code status)
       (read-http-status http)
-    (let ((headers (read-http-headers http)))
+    (let ((headers (read-http-headers http))
+          (body (read-http-body http)))
+
+      ;; decode the body
+      (with-header (encoding "Content-Encoding" headers :if-not-found "identity")
+        (setf body (content-decode body encoding)))
+      (with-header (encoding "Transfer-Encoding" headers :if-not-found "identity")
+        (setf body (transfer-decode body encoding)))
+
+      ;; create the server response
       (make-instance 'response
                      :request req
                      :code code
                      :status status
                      :headers headers
-                     :body (read-http-body http headers)))))
+                     :body body))))
 
 (defun http-perform (req)
   "Perform a generic HTTP request, return the request and body."
