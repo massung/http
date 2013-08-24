@@ -9,12 +9,12 @@ It makes heavy use of my [`re`](http://github.com/massung/re) and [`lexer`](http
 After loading the package, the first step is to parse a URL.
 
 	CL-USER > (parse-url "www.google.com")
-	#<URL "http://www.google.com/">
+	#<URL HTTP "www.google.com" "/">
 	
 Once you have a URL, you can create a `request` object.
 
 	CL-USER > (make-instance 'request :url *)
-	#<REQUEST GET "http://www.google.com/">
+	#<REQUEST GET HTTP "www.google.com" "/">
 	
 Finally, `http-perform` will open a socket, issue the request to the server, and return a `response` object.
 
@@ -59,4 +59,9 @@ PUT, POST, and PATCH requests have an optional `data` argument, which is what is
 
 ## Additional Utility Functions
 
+TODO:
+
+* `make-query-string`
+* `parse-query-string`
 * `encode-url`
+* `with-header`
