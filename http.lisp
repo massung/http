@@ -264,7 +264,7 @@
     (loop :for k := (pop q)
           :for v := (pop q)
           :while k
-          :collect (list k (or v "")))))
+          :collect (list k (if v (decode-url v) "")))))
 
 (defun basic-auth-string (login)
   "Create the basic auth value for the Authorization header."

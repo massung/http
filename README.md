@@ -79,7 +79,7 @@ The `make-query-string` function takes an list of key/value pairs and generates 
 The inverse of `make-query-string` is `parse-query-string`. Given a query string, it will parse it into a list of key/value pairs.
 
 	CL-USER > (parse-query-string *)
-	(("q" "henry+gale") ("limit" "10"))
+	(("q" "henry gale") ("limit" "10"))
 	
 *NOTE: While `make-query-string` takes any value and converts it to a string, `parse-query-string` will only return strings for values as it is unaware of the type. It's up to you to parse the value appropriately.*
 
