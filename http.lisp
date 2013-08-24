@@ -238,7 +238,7 @@
     (loop :for p :in query :and i :from 0
           :do (destructuring-bind (key value)
                   p
-                (format qs "~:[~;&~]~a=~a" (plusp i) key (encode-url value))))))
+                (format qs "~:[~;&~]~a=~a" (plusp i) key (encode-url (princ-to-string value)))))))
 
 (defun parse-query-string (qs)
   "Return an associative list of query string parameters."
@@ -357,28 +357,33 @@
         ;; return the response
         (read-http-response http req)))))
 
-(defun http-follow (resp)
+(defun http-follow (resp &key (limit 3))
   "Follow a reponse's redirection to a new resource location."
-  (with-slots (request headers)
+  (with-slots (code request headers)
       resp
-    (let ((req (with-header (loc "Location" headers :if-not-found (error "No \"Location\" header."))
-                 (let ((url (parse-url loc)))
-                   (with-slots (query fragment)
-                       (request-url request)
-
-                     ;; if the new url doesn't have a query or fragment, use the old one
-                     (unless (url-query url)
-                       (setf (url-query url) query))
-                     (unless (url-fragment url)
-                       (setf (url-fragment url) fragment))
-
-                     ;; create the new request
-                     (make-instance 'request
-                                    :url url
-                                    :method (request-method request)
-                                    :headers (request-headers request)
-                                    :data (request-data request)))))))
-      (http-perform req))))
+    (case code
+      ((301 302 303 304 305 307)
+       (if (zerop limit)
+           resp
+         (let ((req (with-header (loc "Location" headers :if-not-found (error "No \"Location\" header."))
+                      (let ((url (parse-url loc)))
+                        (with-slots (query fragment)
+                            (request-url request)
+                          
+                          ;; if the new url doesn't have a query or fragment, use the old one
+                          (unless (url-query url)
+                            (setf (url-query url) query))
+                          (unless (url-fragment url)
+                            (setf (url-fragment url) fragment))
+                          
+                          ;; create the new request
+                          (make-instance 'request
+                                         :url url
+                                         :data (request-data request)
+                                         :headers (request-headers request)
+                                         :method (if (= code 303) "GET" (request-method request))))))))
+           (http-follow (http-perform req) :limit (1- limit)))))
+      (otherwise resp))))
 
 (defun http-head (url &key headers)
   "Perform a HEAD request for a URL, return the response."
