@@ -17,6 +17,9 @@
 ;;;; under the License.
 ;;;;
 
+(eval-when (:compile-toplevel :load-toplevel :execute)
+  (require "comm"))
+
 (defpackage :http
   (:use :cl :lw :system :comm :re :lexer :parsergen :base64)
   (:export
