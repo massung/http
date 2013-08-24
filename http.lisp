@@ -35,6 +35,7 @@
 
    ;; data post body functions
    #:make-query-string
+   #:parse-query-string
 
    ;; request functions
    #:http-perform
@@ -51,6 +52,7 @@
    #:url-port
    #:url-auth
    #:url-scheme
+   #:url-secure
    #:url-path
    #:url-query
    #:url-fragment
@@ -72,9 +74,9 @@
 
 (defclass url ()
   ((domain   :initarg :domain   :accessor url-domain)
-   (port     :initarg :port     :accessor url-port     :initform 80)
+   (port     :initarg :port     :accessor url-port     :initform nil)
    (auth     :initarg :auth     :accessor url-auth     :initform nil)
-   (scheme   :initarg :scheme   :accessor url-scheme   :initform "http://")
+   (scheme   :initarg :scheme   :accessor url-scheme   :initform :http)
    (path     :initarg :path     :accessor url-path     :initform "/")
    (query    :initarg :query    :accessor url-query    :initform nil)
    (fragment :initarg :fragment :accessor url-fragment :initform nil))
@@ -97,12 +99,17 @@
 
 (defmethod print-object ((url url) s)
   "Output a URL to a stream."
-  (print-unreadable-object (url s :type t) (format s "~s" (print-url url nil))))
+  (print-unreadable-object (url s :type t)
+    (with-slots (scheme domain path)
+        url
+      (format s "~a ~s ~s" scheme domain path))))
 
 (defmethod print-object ((req request) s)
   "Output an HTTP request to a stream."
   (print-unreadable-object (req s :type t)
-    (format s "~a ~s" (request-method req) (print-url (request-url req) nil))))
+    (with-slots (scheme domain path)
+        (request-url req)
+      (format s "~a ~a ~s ~s" (request-method req) scheme domain path))))
 
 (defmethod print-object ((resp response) stream)
   "Output an HTTP response to a stream."
@@ -120,15 +127,28 @@
   "Reserved URL characters that *must* be encoded.")
 (defconstant +unwise-chars+ '(#\{ #\} #\| #\\ #\^ #\[ #\] #\`)
   "Characters presenting a possibility of being misunderstood and should be encoded.")
-(defconstant +url-format+ "~a~@[~a@~]~a~:[:~a~;~*~]~a~@[?~a~]~@[#~a~]"
-  "Format used to display all components of a URL.")
+(defconstant +http-schemes+ '((:http 80) (:https 443))
+  "A list of valid HTTP schemes and their default ports.")
+
+(defun http-scheme (name)
+  "Return the scheme keyword for a given scheme or NIL."
+  (flet ((scheme-equal (a b)
+           (string-equal a (symbol-name b))))
+    (or (first (assoc name +http-schemes+ :test #'scheme-equal))
+
+        ;; signal an error
+        (error "Unknown HTTP scheme ~s" name))))
+
+(defun http-port (url)
+  "Returns the proper port for a URL given scheme."
+  (or (url-port url) (second (assoc (url-scheme url) +http-schemes+))))
 
 (deflexer url-lexer
   ("%."                       (values :dot))
-  ("^[^:]+://"                (values :scheme $$))
+  ("^([^/:]+)://"             (values :scheme (http-scheme $1)))
   ("([^:]+:[^@]+)@"           (values :auth $1))
   ("/[^?#]*"                  (values :path $$))
-  ("%?([^#]*)"                (values :query $1))
+  ("%?([^#]+)"                (values :query $1))
   ("#(.*)"                    (values :fragment $1))
   ("[%a%d%-]+"                (values :domain $$))
   (":(%d+)"                   (values :port (parse-integer $1))))
@@ -142,7 +162,7 @@
 
   ;; http://
   ((scheme :scheme auth) `(:scheme ,$1 ,@$2))
-  ((scheme auth) `(:scheme "http://" ,@$1))
+  ((scheme auth) `(:scheme :http ,@$1))
 
   ;; login:password@
   ((auth :auth domain) `(:auth ,$1 ,@$2))
@@ -157,14 +177,14 @@
 
   ;; :80
   ((port :port path) `(:port ,$1 ,@$2))
-  ((port path) `(:port 80 ,@$1))
+  ((port path) `(:port nil ,@$1))
 
   ;; /index.html
   ((path :path query) `(:path ,$1 ,@$2))
   ((path query) `(:path "/" ,@$1))
 
   ;; ?q=value
-  ((query :query fragment) `(:query ,$1 ,@$2))
+  ((query :query fragment) `(:query ,(parse-query-string $1) ,@$2))
   ((query fragment) $1)
 
   ;; #anchor
@@ -190,12 +210,6 @@
   (let ((spec (parse #'url-parser (tokenize #'url-lexer url))))
     (apply #'make-instance (cons 'url spec))))
 
-(defun print-url (url &optional (s t))
-  "Outputs all parts of a URL to a stream."
-  (with-slots (scheme auth domain port path query fragment)
-      url
-    (format s +url-format+ scheme auth domain (= port 80) port path query fragment)))
-
 (defun escape-char-p (c)
   "T if a character needs to be escaped in a URL."
   (or (char< c #\!)
@@ -215,13 +229,21 @@
                     (format url "%~16,2,'0r" (char-code c)))
                 (princ c url)))))
 
-(defun make-query-string (params)
+(defun make-query-string (query)
   "Build a k=v&.. query string from an associative list, properly url-encoded."
   (with-output-to-string (qs)
-    (loop :for p :in params :and i :from 0
+    (loop :for p :in query :and i :from 0
           :do (destructuring-bind (key value)
                   p
                 (format qs "~:[~;&~]~a=~a" (plusp i) key (encode-url value))))))
+
+(defun parse-query-string (qs)
+  "Return an associative list of query string parameters."
+  (let ((q (split-sequence "&=" qs)))
+    (loop :for k := (pop q)
+          :for v := (pop q)
+          :while k
+          :collect (list k (or v "")))))
 
 (defun basic-auth-string (login)
   "Create the basic auth value for the Authorization header."
@@ -297,10 +319,13 @@
   "Perform a generic HTTP request, return the request and body."
   (with-slots (url method headers data)
       req
-    (with-slots (domain port path query auth)
+    (with-slots (scheme domain path query auth)
         url
-      (with-open-stream (http (open-tcp-stream domain port))
-        (format http "~a ~a~@[~a~] HTTP/1.1~c~c" method path query #\return #\linefeed)
+      (with-open-stream (http (open-tcp-stream domain (http-port url)))
+        (when (eq scheme :https)
+          (attach-ssl http :ssl-side :client))
+
+        (format http "~a ~a?~a HTTP/1.1~c~c" method path (make-query-string query) #\return #\linefeed)
 
         ;; send headers
         (format http "Host: ~a~c~c" domain #\return #\linefeed)
@@ -334,11 +359,22 @@
   (with-slots (request headers)
       resp
     (let ((req (with-header (loc "Location" headers :if-not-found (error "No \"Location\" header."))
-                 (make-instance 'request
-                                :url (parse-url loc)
-                                :method (request-method request)
-                                :headers (request-headers request)
-                                :data (request-data request)))))
+                 (let ((url (parse-url loc)))
+                   (with-slots (query fragment)
+                       (request-url request)
+
+                     ;; if the new url doesn't have a query or fragment, use the old one
+                     (unless (url-query url)
+                       (setf (url-query url) query))
+                     (unless (url-fragment url)
+                       (setf (url-fragment url) fragment))
+
+                     ;; create the new request
+                     (make-instance 'request
+                                    :url url
+                                    :method (request-method request)
+                                    :headers (request-headers request)
+                                    :data (request-data request)))))))
       (http-perform req))))
 
 (defun http-head (url &key headers)
