@@ -30,6 +30,7 @@
    ;; url helpers
    #:parse-url
    #:encode-url
+   #:decode-url
    #:print-url
 
    ;; macros
@@ -231,6 +232,23 @@
                       (princ #\+ url)
                     (format url "%~16,2,'0r" (char-code c)))
                 (princ c url)))))
+
+(defun decode-url (url)
+  "Decode an encoded URL into a string. Returns NIL if malformed."
+  (with-output-to-string (string)
+    (with-input-from-string (s url)
+      (loop :for c := (read-char s nil nil)
+            :while c
+            :do (case c
+                  (#\+ (princ #\space string))
+                  (#\% (let ((c1 (read-char s nil nil))
+                             (c2 (read-char s nil nil)))
+                         (when (and c1 c2)
+                           (let ((code (logior (ash (parse-integer (string c1) :radix 16) 4)
+                                               (ash (parse-integer (string c2) :radix 16) 0))))
+                             (princ (code-char code) string)))))
+                  (otherwise
+                   (princ c string)))))))
 
 (defun make-query-string (query)
   "Build a k=v&.. query string from an associative list, properly url-encoded."

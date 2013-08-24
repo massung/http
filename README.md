@@ -63,8 +63,13 @@ The `http` package also comes with quite a few helper functions to assist you in
 
 The `encode-url` function takes a string and makes sure that all characters are properly encoded for the query string of a URL.
 
-	CL-USER > (encode-url "amount=$9.50+/-5 cents")
-	"amount%3D%249.50%2B%2F-5+cents"
+	CL-USER > (encode-url "$9.50+/-5 cents")
+	"%249.50%2B%2F-5+cents"
+
+The inverse is `decode-url`, which given an encoded string will decode it into the original value.
+
+	CL-USER > (decode-url *)
+	"$9.50+/-5 cents"
 	
 The `make-query-string` function takes an list of key/value pairs and generates a url-encoded query string. This function is used internally for all URL query strings, but you can use it for PUT and POST request bodies.
 
