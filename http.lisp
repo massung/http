@@ -217,9 +217,8 @@
   "Print a URL as a complete string."
   (with-slots (scheme auth domain port path query fragment)
       url
-    (let ((def-port-p (eql (second (assoc scheme +http-schemes+)) port))
-          (qs (when query (make-query-string query))))
-      (format stream +url-format+ scheme auth domain def-port-p port path qs fragment))))
+    (let ((qs (when query (make-query-string query))))
+      (format stream +url-format+ scheme auth domain (null port) port path qs fragment))))
 
 (defun escape-char-p (c)
   "T if a character needs to be escaped in a URL."
