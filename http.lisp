@@ -31,7 +31,7 @@
    #:parse-url
    #:encode-url
    #:decode-url
-   #:print-url
+   #:format-url
 
    ;; macros
    #:with-url
@@ -103,17 +103,14 @@
 
 (defmethod print-object ((url url) s)
   "Output a URL to a stream."
-  (print-unreadable-object (url s :type t)
-    (with-slots (scheme domain path)
-        url
-      (format s "~a ~s ~s" scheme domain path))))
+  (print-unreadable-object (url s :type t) (format s "~s" (format-url url))))
 
 (defmethod print-object ((req request) s)
   "Output an HTTP request to a stream."
   (print-unreadable-object (req s :type t)
-    (with-slots (scheme domain path)
-        (request-url req)
-      (format s "~a ~a ~s ~s" (request-method req) scheme domain path))))
+    (with-slots (method url)
+        req
+      (format s "~a ~s" method (format-url url)))))
 
 (defmethod print-object ((resp response) stream)
   "Output an HTTP response to a stream."
@@ -133,6 +130,8 @@
   "Characters presenting a possibility of being misunderstood and should be encoded.")
 (defconstant +http-schemes+ '((:http 80) (:https 443))
   "A list of valid HTTP schemes and their default ports.")
+(defconstant +url-format+ "~(~a~)://~@[~a@~]~a~:[:~a~;~*~]~a~@[?~a~]~@[#~a~]"
+  "The format options used to recreate a URL string.")
 
 (defun http-scheme (name)
   "Return the scheme keyword for a given scheme or NIL."
@@ -213,6 +212,14 @@
   "Parse a URL and return. If URL is relative, set what it's relative to."
   (let ((spec (parse #'url-parser (tokenize #'url-lexer url))))
     (apply #'make-instance (cons 'url spec))))
+
+(defun format-url (url &optional stream)
+  "Print a URL as a complete string."
+  (with-slots (scheme auth domain port path query fragment)
+      url
+    (let ((def-port-p (eql (second (assoc scheme +http-schemes+)) port))
+          (qs (when query (make-query-string query))))
+      (format stream +url-format+ scheme auth domain def-port-p port path qs fragment))))
 
 (defun escape-char-p (c)
   "T if a character needs to be escaped in a URL."
