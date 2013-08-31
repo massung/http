@@ -45,8 +45,11 @@ By default, the `http` package won't send an "Accept-Encoding" header with your 
 
 Now, assuming you have a function `gzip:unzip`, you can decode the body with something like this:
 
-	CL-USER > (with-header (encoding "Content-Encoding" :if-not-found "identity")
-	            (let ((decoder (if (string= encoding "identity") #'identity #'gzip:unzip)))
+	CL-USER > (with-header (encoding "Content-Encoding" (resopnse-headers *) :if-not-found "identity")
+	            (let ((decoder (cond
+	                            ((string= encoding "identity") #'identity)
+	                            ((string= encoding "gzip") #'gzip:unzip)
+	                            (t (error "Unknown Content-Encoding: ~a" encoding)))))
 	              (funcall decoder (response-body *))))
 
 *NOTE: At some point the "gzip" encoding will be added to the `http` package and this will be done for you.*
