@@ -315,11 +315,11 @@
 
 (defun read-http-body (http)
   "Read the rest of the response from the HTTP server."
-  (with-output-to-string (s)
-    (let ((seq (make-array 4000 :element-type 'unsigned-byte :fill-pointer t)))
+  (with-output-to-string (body)
+    (let ((seq (make-array 4000 :element-type 'base-char :fill-pointer t)))
       (loop :for bytes-read := (read-sequence seq http)
             :while (plusp bytes-read)
-            :do (write-sequence seq s :end bytes-read)))))
+            :do (write-sequence seq body :end bytes-read)))))
 
 (defun read-http-response (http req)
   "Read a response string from an HTTP socket stream and parse it."
@@ -335,12 +335,7 @@
         (setf body (transfer-decode body encoding)))
 
       ;; create the server response
-      (make-instance 'response
-                     :request req
-                     :code code
-                     :status status
-                     :headers headers
-                     :body body))))
+      (make-instance 'response :request req :code code :status status :headers headers :body body))))
 
 (defun http-perform (req)
   "Perform a generic HTTP request, return the request and body."
@@ -348,7 +343,7 @@
       req
     (with-slots (scheme domain path query auth)
         url
-      (with-open-stream (http (open-tcp-stream domain (http-port url)))
+      (with-open-stream (http (open-tcp-stream domain (http-port url) :element-type 'base-char))
         (when (eq scheme :https)
           (attach-ssl http :ssl-side :client))
 
