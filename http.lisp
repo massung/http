@@ -35,7 +35,7 @@
 
    ;; macros
    #:with-url
-   #:with-header
+   #:with-headers
 
    ;; data post body functions
    #:make-query-string
@@ -205,10 +205,15 @@
                      (parse-url ,p))))
          (progn ,@body)))))
 
-(defmacro with-header ((value key headers &key if-not-found) &body body)
+(defmacro with-headers ((&rest bindings) headers-expr &body body)
   "Extract a value from an HTTP header assoc list."
-  `(let ((,value (or (second (assoc ,key ,headers :test #'string=)) ,if-not-found)))
-     (progn ,@body)))
+  (let ((headers (gensym)))
+    `(let ((,headers ,headers-expr))
+       (let (,@(loop :for binding :in bindings
+                     :collect (destructuring-bind (var key &key if-not-found)
+                                  binding
+                                `(,var (or (second (assoc ,key ,headers :test #'string=)) ,if-not-found)))))
+         (progn ,@body)))))
 
 (defun parse-url (url)
   "Parse a URL and return. If URL is relative, set what it's relative to."
@@ -278,24 +283,6 @@
   "Create the basic auth value for the Authorization header."
   (format nil "Basic ~a" (base64-encode login)))
 
-(defun parse-chunked-string (string)
-  "Read a string in 'chunked' format (Transfer-Encoding) and return the actual contents."
-  (with-input-from-string (in string)
-    (with-output-to-string (s)
-      (loop :for len := (parse-integer (read-line in) :radix 16 :junk-allowed t)
-            :while (plusp len)
-            :do (let ((seq (make-array len :element-type 'unsigned-byte :fill-pointer t)))
-                  (write-sequence seq s :end (read-sequence seq in))
-                  (read-line in))))))
-
-(defun transfer-decode (body encoding)
-  "Given the transfer encoding type, decode the body."
-  (cond
-   ((string= encoding "chunked") (parse-chunked-string body))
-   ((string= encoding "identity") (identity body))
-   (t
-    (error "Unsupported Transfer-Encoding: ~s" encoding))))
-
 (defun read-http-status (http)
   "Parse the line and parse it. Return the code and value."
   (with-re-match (match (match-re *status-re* (read-line http)))
@@ -308,27 +295,40 @@
              (list $1 $2))))
     (loop :for header := (read-header) :while header :collect header)))
 
-(defun read-http-body (http)
-  "Read the rest of the response from the HTTP server."
+(defun read-http-content-chunked (http)
+  "Read the body from the HTTP server using a chunked Transfer-Encoding."
   (with-output-to-string (body)
-    (let ((seq (make-array 4000 :element-type 'base-char :fill-pointer t)))
-      (loop :for bytes-read := (read-sequence seq http)
+    (loop :for len := (parse-integer (read-line http) :radix 16 :junk-allowed t)
+          :while (plusp len)
+          :do (let ((chunk (make-string len)))
+                (write-sequence chunk body :end (read-sequence chunk http))
+                (read-line http)))))
+
+(defun read-http-content (http &optional content-length)
+  "Read the rest of the response from the HTTP server."
+  (if content-length
+      (let ((body (make-string (parse-integer content-length))))
+        (prog1 body (read-sequence body http)))
+    (with-output-to-string (body)
+      (loop :with chunk := (make-string 4000)
+            :for bytes-read := (read-sequence chunk http)
             :while (plusp bytes-read)
-            :do (write-sequence seq body :end bytes-read)))))
+            :do (write-sequence chunk body :end bytes-read)))))
 
 (defun read-http-response (http req)
   "Read a response string from an HTTP socket stream and parse it."
   (multiple-value-bind (code status)
       (read-http-status http)
-    (let ((headers (read-http-headers http))
-          (body (read-http-body http)))
-
-      ;; decode the body format (e.g. chunked)
-      (with-header (encoding "Transfer-Encoding" headers :if-not-found "identity")
-        (setf body (transfer-decode body encoding)))
-
-      ;; create the server response
-      (make-instance 'response :request req :code code :status status :headers headers :body body))))
+    (let ((headers (read-http-headers http)))
+      (with-headers ((encoding "Transfer-Encoding" :if-not-found "identity")
+                     (content-length "Content-Length"))
+          headers
+        (let ((body (cond
+                     ((string= encoding "identity") (read-http-content http content-length))
+                     ((string= encoding "chunked") (read-http-content-chunked http))
+                     (t
+                      (error "Unknown Transfer-Encoding ~s" encoding)))))
+          (make-instance 'response :request req :code code :status status :headers headers :body body))))))
 
 (defun http-perform (req)
   "Perform a generic HTTP request, return the request and body."

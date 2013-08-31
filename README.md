@@ -45,11 +45,13 @@ By default, the `http` package won't send an "Accept-Encoding" header with your 
 
 Now, assuming you have a function `gzip:unzip`, you can decode the body with something like this:
 
-	CL-USER > (with-header (encoding "Content-Encoding" (resopnse-headers *) :if-not-found "identity")
+	CL-USER > (with-headers ((encoding "Content-Encoding" :if-not-found "identity"))
+	              (response-headers *)
 	            (let ((decoder (cond
 	                            ((string= encoding "identity") #'identity)
 	                            ((string= encoding "gzip") #'gzip:unzip)
-	                            (t (error "Unknown Content-Encoding: ~a" encoding)))))
+	                            (t
+	                             (error "Unknown Content-Encoding: ~a" encoding)))))
 	              (funcall decoder (response-body *))))
 
 *NOTE: At some point the "gzip" encoding will be added to the `http` package and this will be done for you.*
@@ -101,13 +103,15 @@ The inverse of `make-query-string` is `parse-query-string`. Given a query string
 	
 *NOTE: While `make-query-string` takes any value and converts it to a string, `parse-query-string` will only return strings for values as it is unaware of the type. It's up to you to parse the value appropriately.*
 
-The macro `with-header` is very useful in parsing response headers. Given a header key, it will find the header in a list of headers (if it exists) and execute a body with the value of the header bound.
+The macro `with-headers` is very useful in parsing response (and request) headers and binding keys to values.
 
-	CL-USER > (http-get "www.google.com")
+	CL-USER > (http-get "www.microsoft.com")
 	#<RESPONSE 200 "OK">
 
-	CL-USER > (with-header (server "Server" (response-headers *) :if-not-found nil)
-	            server)
-	"gws"
+	CL-USER > (with-headers ((server "Server" :if-not-found "unknown")
+	                         (content-length "Content-Length"))
+	              (response-headers *)
+	            (list content-length server))
+	("1020" "Microsoft-IIS/8.0")
 
 *NOTE: The `:if-not-found` optional argument defaults to `nil`. It is lazily evaluated, so it's the perfect place to signal an `error` if you want to ensure that a particular header exists.*
