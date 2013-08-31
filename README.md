@@ -36,6 +36,21 @@ Following a redirect is simply a matter of fetching the "Location" header in the
 
 *NOTE: If the response doesn't contain a new "Location" to follow, an error is signaled.*
 
+## Handling Encoded Content
+
+By default, the `http` package won't send an "Accept-Encoding" header with your request. Without this, a server shouldn't send an encoded body. You can, however, send the header yourself, and then decode the body after you have received a response.
+
+	CL-USER > (http-get "httpbin.org/gzip" :headers '(("Accept-Encoding" "gzip")))
+	#<RESPONSE 200 OK>
+
+Now, assuming you have a function `gzip:unzip`, you can decode the body with something like this:
+
+	CL-USER > (with-header (encoding "Content-Encoding" :if-not-found "identity")
+	            (let ((decoder (if (string= encoding "identity") #'identity #'gzip:unzip)))
+	              (funcall decoder (response-body *))))
+
+*NOTE: At some point the "gzip" encoding will be added to the `http` package and this will be done for you.*
+
 ## Even Quicker?
 
 While that was an overview of what's going on under-the-hood, those three steps are wrapped up nicely in the following helper functions:
