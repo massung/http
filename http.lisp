@@ -46,6 +46,8 @@
    #:http-follow
    #:http-head
    #:http-get
+   #:http-options
+   #:http-trace
    #:http-delete
    #:http-put
    #:http-post
@@ -65,6 +67,7 @@
    #:request-url
    #:request-method
    #:request-headers
+   #:request-decoders
    #:request-data
 
    ;; response accessors
@@ -87,10 +90,11 @@
   (:documentation "Universal Resource Locator."))
 
 (defclass request ()
-  ((url     :initarg :url     :accessor request-url)
-   (method  :initarg :method  :accessor request-method  :initform "GET")
-   (headers :initarg :headers :accessor request-headers :initform nil)
-   (data    :initarg :data    :accessor request-data    :initform nil))
+  ((url      :initarg :url      :accessor request-url)
+   (method   :initarg :method   :accessor request-method   :initform "GET")
+   (headers  :initarg :headers  :accessor request-headers  :initform nil)
+   (decoders :initarg :decoders :accessor request-decoders :initform nil)
+   (data     :initarg :data     :accessor request-data     :initform nil))
   (:documentation "A request for a URL from an HTTP server."))
 
 (defclass response ()
@@ -286,12 +290,14 @@
                   (write-sequence seq s :end (read-sequence seq in))
                   (read-line in))))))
 
-(defun content-decode (body encoding)
+(defun content-decode (body encoding decoders)
   "Given the content encoding type, decode the contents."
-  (cond
-   ((string= encoding "identity") (identity body))
-   (t
-    (error "Unsupported Content-Encoding: ~s" encoding))))
+  (if (string= encoding "identity")
+      body
+    (let ((decoder (assoc encoding decoders :test #'string=)))
+      (if decoder
+          (funcall (second decoder) body)
+        (error "Unsupported Content-Encoding: ~s" encoding)))))
 
 (defun transfer-decode (body encoding)
   "Given the transfer encoding type, decode the body."
@@ -328,18 +334,21 @@
     (let ((headers (read-http-headers http))
           (body (read-http-body http)))
 
-      ;; decode the body
-      (with-header (encoding "Content-Encoding" headers :if-not-found "identity")
-        (setf body (content-decode body encoding)))
+      ;; decode the body format (e.g. chunked)
       (with-header (encoding "Transfer-Encoding" headers :if-not-found "identity")
         (setf body (transfer-decode body encoding)))
+
+      ;; decode the body encoding (e.g. gzip)
+      (with-header (encoding "Content-Encoding" headers :if-not-found "identity")
+        (let ((decoders (request-decoders req)))
+          (setf body (content-decode body encoding decoders))))
 
       ;; create the server response
       (make-instance 'response :request req :code code :status status :headers headers :body body))))
 
 (defun http-perform (req)
   "Perform a generic HTTP request, return the request and body."
-  (with-slots (url method headers data)
+  (with-slots (url method headers decoders data)
       req
     (with-slots (scheme domain path query auth)
         url
@@ -359,6 +368,11 @@
         (when auth
           (format http "Authorization: ~a~c~c" (basic-auth-string auth) #\return #\linefeed))
 
+        ;; construct encoding acceptance header
+        (when decoders
+          (let ((encodings (format nil "~{~(~a~)~^, ~}" (mapcar #'car decoders))))
+            (format http "Accept-Encoding: ~a~c~c" encodings #\return #\linefeed)))
+
         ;; user headers
         (dolist (header headers)
           (format http "~a: ~a~c~c" (first header) (second header) #\return #\linefeed))
@@ -375,6 +389,12 @@
 
         ;; return the response
         (read-http-response http req)))))
+
+(defun http-simple-perform (url &rest request-initargs)
+  "Parse a URL, create a simple request, and perform the request."
+  (with-url (url url)
+    (let ((req (apply #'make-instance 'request :url url request-initargs)))
+      (http-perform req))))
 
 (defun http-follow (resp &key (limit 3))
   "Follow a reponse's redirection to a new resource location."
@@ -399,6 +419,7 @@
                           (make-instance 'request
                                          :url url
                                          :data (request-data request)
+                                         :decoders (request-decoders request)
                                          :headers (request-headers request)
                                          :method (if (= code 303) "GET" (request-method request))))))))
            (http-follow (http-perform req) :limit (1- limit)))))
@@ -406,36 +427,32 @@
 
 (defun http-head (url &key headers)
   "Perform a HEAD request for a URL, return the response."
-  (with-url (url url)
-    (let ((req (make-instance 'request :url url :method "HEAD" :headers headers)))
-      (http-perform req))))      
+  (http-simple-perform url :method "HEAD" :headers headers))
 
-(defun http-get (url &key headers)
-  "Perform a GET request for a URL, return the response and body."
-  (with-url (url url)
-    (let ((req (make-instance 'request :url url :method "GET" :headers headers)))
-      (http-perform req))))
+(defun http-get (url &key headers decoders)
+  "Perform a GET request for a URL, return the response."
+  (http-simple-perform url :method "GET" :headers headers :decoders decoders))
 
-(defun http-delete (url &key headers)
+(defun http-options (url &key headers decoders)
+  "Perform an OPTIONS request for a URL, return the response."
+  (http-simple-perform url :method "OPTIONS" :headers headers :decoders decoders))
+
+(defun http-trace (url &key headers decoders)
+  "Perform an OPTIONS request for a URL, return the response."
+  (http-simple-perform url :method "TRACE" :headers headers :decoders decoders))
+
+(defun http-delete (url &key headers decoders)
   "Perform a DELETE request for a URL, return the response."
-  (with-url (url url)
-    (let ((req (make-instance 'request :url url :method "DELETE" :headers headers)))
-      (http-perform req))))
+  (http-simple-perform url :method "DELETE" :headers headers :decoders decoders))
 
-(defun http-put (url &key headers data)
+(defun http-put (url &key headers decoders data)
   "Perform a PUT request for a URL, return the response."
-  (with-url (url url)
-    (let ((req (make-instance 'request :url url :method "PUT" :headers headers :data data)))
-      (http-perform req))))
+  (http-simple-perform url :method "PUT" :headers headers :decoders decoders :data data))
 
-(defun http-post (url &key headers data)
+(defun http-post (url &key headers decoders data)
   "Perform a POST request for a URL, return the response."
-  (with-url (url url)
-    (let ((req (make-instance 'request :url url :method "POST" :headers headers :data data)))
-      (http-perform req))))
+  (http-simple-perform url :method "POST" :headers headers :decoders decoders :data data))
 
-(defun http-patch (url &key headers data)
+(defun http-patch (url &key headers decoders data)
   "Perform a PATCH request for a URL, return the response."
-  (with-url (url url)
-    (let ((req (make-instance 'request :url url :method "PATCH" :headers headers :data data)))
-      (http-perform req))))
+  (http-simple-perform url :method "PATCH" :headers headers :decoders decoders :data data))
