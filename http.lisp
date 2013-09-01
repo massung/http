@@ -383,7 +383,8 @@
       ((301 302 303 304 305 307)
        (if (zerop limit)
            resp
-         (let ((req (with-header (loc "Location" headers :if-not-found (error "No \"Location\" header."))
+         (let ((req (with-headers ((loc "Location" :if-not-found (error "No \"Location\" header.")))
+                        headers
                       (let ((url (parse-url loc)))
                         (with-slots (query fragment)
                             (request-url request)
