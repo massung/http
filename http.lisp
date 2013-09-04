@@ -23,6 +23,9 @@
 (defpackage :http
   (:use :cl :lw :system :comm :re :lexer :parsergen :base64)
   (:export
+   #:*http-timeout*
+
+   ;; classes
    #:request
    #:response
    #:url
@@ -77,6 +80,9 @@
    #:response-request))
 
 (in-package :http)
+
+(defparameter *http-timeout* nil
+  "Used as the :timeout and :read-timeout to the HTTP stream object.")
 
 (defclass url ()
   ((domain   :initarg :domain   :accessor url-domain)
@@ -336,8 +342,12 @@
       req
     (with-slots (scheme domain path query auth)
         url
-      (with-open-stream (http (open-tcp-stream domain (http-port url) :element-type 'base-char))
-        (when (eq scheme :https)
+      (with-open-stream (http (open-tcp-stream domain (http-port url) :timeout *http-timeout*))
+        (setf (stream:stream-read-timeout http) *http-timeout*
+              (stream:stream-write-timeout http) *http-timeout*)
+
+        ;; perform TLS if required by the scheme
+        (when (member scheme '(:https))
           (attach-ssl http :ssl-side :client))
 
         (format http "~a ~a?~a HTTP/1.1~c~c" method path (make-query-string query) #\return #\linefeed)
