@@ -134,7 +134,7 @@
 
 (defconstant +reserved-chars+ '(#\% #\$ #\& #\+ #\, #\/ #\: #\; #\= #\? #\@)
   "Reserved URL characters that *must* be encoded.")
-(defconstant +unwise-chars+ '(#\{ #\} #\| #\\ #\^ #\[ #\] #\`)
+(defconstant +unwise-chars+ '(#\# #\{ #\} #\| #\\ #\^ #\[ #\] #\`)
   "Characters presenting a possibility of being misunderstood and should be encoded.")
 (defconstant +http-schemes+ '((:http 80) (:https 443))
   "A list of valid HTTP schemes and their default ports.")
