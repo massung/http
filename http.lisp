@@ -138,7 +138,7 @@
   "Characters presenting a possibility of being misunderstood and should be encoded.")
 (defconstant +http-schemes+ '((:http 80) (:https 443))
   "A list of valid HTTP schemes and their default ports.")
-(defconstant +url-format+ "~(~a~)://~@[~a@~]~a~:[:~a~;~*~]~a~@[?~a~]~@[#~a~]"
+(defconstant +url-format+ "~(~a~)://~@[~{~a:~a~}@~]~a~:[:~a~;~*~]~a~@[?~a~]~@[#~a~]"
   "The format options used to recreate a URL string.")
 
 (defun http-scheme (name)
@@ -157,7 +157,7 @@
 (deflexer url-lexer
   ("%."                       (values :dot))
   ("^([^/:]+)://"             (values :scheme (http-scheme $1)))
-  ("([^:]+:[^@]+)@"           (values :auth $1))
+  ("([^:]+):([^@]+)@"         (values :auth (list $1 $2)))
   ("/[^?#]*"                  (values :path $$))
   ("%?([^#]+)"                (values :query $1))
   ("#(.*)"                    (values :fragment $1))
@@ -202,13 +202,22 @@
   ((fragment :fragment) `(:fragment ,$1))
   ((fragment)) nil)
 
-(defmacro with-url ((url url-expr) &body body)
+(defmacro with-url ((url url-expr &rest initargs &key scheme auth domain port path query fragment) &body body)
   "Parse a URL if necessary, bind it, and execute a body."
   (let ((p (gensym)))
     `(let ((,p ,url-expr))
        (let ((,url (if (eq (type-of ,p) 'url)
-                       ,p
-                     (parse-url ,p))))
+                       (if (null ',initargs)
+                           ,p
+                         (make-instance 'url
+                                        :scheme (or ,scheme (url-scheme ,p))
+                                        :auth (or ,auth (url-auth ,p))
+                                        :domain (or ,domain (url-domain ,p))
+                                        :port (or ,port (url-port ,p))
+                                        :path (or ,path (url-path ,p))
+                                        :query (or ,query (url-query ,p))
+                                        :fragment (or ,fragment (url-fragment ,p))))
+                     (parse-url ,p ,@initargs))))
          (progn ,@body)))))
 
 (defmacro with-headers ((&rest bindings) headers-expr &body body)
@@ -221,10 +230,11 @@
                                 `(,var (or (second (assoc ,key ,headers :test #'string=)) ,if-not-found)))))
          (progn ,@body)))))
 
-(defun parse-url (url)
+(defun parse-url (url &rest initargs &key scheme auth domain port path query fragment)
   "Parse a URL and return. If URL is relative, set what it's relative to."
+  (declare (ignorable scheme auth domain port path query fragment))
   (let ((spec (parse #'url-parser (tokenize #'url-lexer url))))
-    (apply #'make-instance (cons 'url spec))))
+    (apply #'make-instance 'url (nconc initargs spec))))
 
 (defun format-url (url &optional stream)
   "Print a URL as a complete string."
@@ -287,7 +297,8 @@
 
 (defun basic-auth-string (login)
   "Create the basic auth value for the Authorization header."
-  (format nil "Basic ~a" (base64-encode login)))
+  (let ((auth-string (format nil "~{~a:~a~}" login)))
+    (format nil "Basic ~a" (base64-encode auth-string))))
 
 (defun read-http-status (http)
   "Parse the line and parse it. Return the code and value."

@@ -56,6 +56,24 @@ Now, assuming you have a function `gzip:unzip`, you can decode the body with som
 
 *NOTE: At some point the "gzip" encoding will be added to the `http` package and this will be done for you.*
 
+## Constructing URLs
+
+While the `url` class is exported, and you are certainly free to `(make-instance 'url ...)`, the `with-url` macro can be extremely helpful.
+
+	(with-url ((url url-form &rest initargs) &body body)
+
+The `url-form` can be either another `url` object or a string to be parsed with `parse-url`. After `url-form` is evaluated, if you passed any `initargs`, they will be used to override the various initargs before being bound to the `url` variable.
+
+	CL-USER > (with-url (url "apple.com" :path "/trailers") url)
+	#<URL "http://apple.com/trailers">
+
+	CL-USER > (with-url (url * :scheme :https :auth '("my" "password")) url)
+	#<URL "https://my:password@apple.com/trailers">
+
+This is extremely handy.
+
+*NOTE: The `parse-url` function also takes these `initargs` as well, allowing you to override whatever was parsed!*
+
 ## Even Quicker?
 
 While that was an overview of what's going on under-the-hood, those three steps are wrapped up nicely in the following helper functions:
@@ -67,9 +85,7 @@ While that was an overview of what's going on under-the-hood, those three steps 
 	(http-post url &key headers data)
 	(http-patch url &key headers data)
 
-Each of these functions use the `with-url` macro, allowing you to pass either a `url` object or a string, which will be parsed.
-
-	(with-url ((url url-expr) &body body)
+Each of these functions use the `with-url` macro, allowing you to pass either a `url` object or a string.
 
 The optional `headers` should be an associative list of key/value strings that will be sent with the request. 
 
