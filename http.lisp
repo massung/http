@@ -390,10 +390,11 @@
         ;; return the response
         (read-http-response http req)))))
 
-(defun http-simple-perform (url &rest request-initargs)
+(defun http-simple-perform (url &rest initargs &key method headers data)
   "Parse a URL, create a simple request, and perform the request."
+  (declare (ignorable method headers data))
   (with-url (url url)
-    (let ((req (apply #'make-instance 'request :url url request-initargs)))
+    (let ((req (apply #'make-instance 'request :url url initargs)))
       (http-perform req))))
 
 (defun http-follow (resp &key (limit 3))
