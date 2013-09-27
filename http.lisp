@@ -285,7 +285,7 @@
     (loop :for p :in query :and i :from 0
           :do (destructuring-bind (key value)
                   p
-                (format qs "~:[~;&~]~a=~a" (plusp i) key (encode-url (princ-to-string value)))))))
+                (format qs "~:[~;~:[~;&~]~a=~a~]" value (plusp i) key (encode-url (princ-to-string value)))))))
 
 (defun parse-query-string (qs)
   "Return an associative list of query string parameters."
