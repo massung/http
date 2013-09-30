@@ -282,10 +282,10 @@
 (defun make-query-string (query)
   "Build a k=v&.. query string from an associative list, properly url-encoded."
   (with-output-to-string (qs)
-    (loop :for p :in query :and i :from 0
-          :do (destructuring-bind (key value)
-                  p
-                (format qs "~:[~;~:[~;&~]~a=~a~]" value (plusp i) key (encode-url (princ-to-string value)))))))
+    (loop :for (key value) :in query
+          :when value
+          :do (let ((encoded-value (encode-url (princ-to-string value))))
+                (format qs "~:[~;&~]~a=~a" (plusp (file-position qs)) key encoded-value)))))
 
 (defun parse-query-string (qs)
   "Return an associative list of query string parameters."
