@@ -119,6 +119,14 @@ The inverse of `make-query-string` is `parse-query-string`. Given a query string
 	
 *NOTE: While `make-query-string` takes any value and converts it to a string, `parse-query-string` will only return strings for values as it is unaware of the type. It's up to you to parse the value appropriately.*
 
+The `encode-html` and `decode-html` can be used to replace unicode characters in a string.
+
+	CL-USER > (encode-html "<this>")
+	"&lt;this&gt;"
+
+	CL-USER > (decode-html "This &mdash; That")
+	"This — That"
+
 The macro `with-headers` is very useful in parsing response (and request) headers and binding keys to values.
 
 	CL-USER > (http-get "www.microsoft.com")

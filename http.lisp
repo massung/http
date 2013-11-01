@@ -39,10 +39,15 @@
    ;; macros
    #:with-url
    #:with-headers
+   #:with-response
 
    ;; data post body functions
    #:make-query-string
    #:parse-query-string
+
+   ;; html text encoding
+   #:encode-html
+   #:decode-html
 
    ;; request functions
    #:http-perform
@@ -140,6 +145,33 @@
   "A list of valid HTTP schemes and their default ports.")
 (defconstant +url-format+ "~(~a~)://~@[~{~a:~a~}@~]~a~:[:~a~;~*~]~a~@[?~a~]~@[#~a~]"
   "The format options used to recreate a URL string.")
+(defconstant +ref-re+ (compile-re "&((#?x?)([^;]+));")
+  "Compiled pattern used for replacing inner-text entity references.")
+
+(defconstant +html-entities+
+  `(("quot"   "\"")
+    ("apos"   "'")
+    ("lt"     "<")
+    ("gt"     ">")
+    ("amp"    "&")
+
+    ;; not in the spec; very common
+    ("copy"   ,(string (code-char 169)))
+    ("reg"    ,(string (code-char 174)))
+    ("cent"   ,(string (code-char 162)))
+    ("pound"  ,(string (code-char 163)))
+    ("yen"    ,(string (code-char 165)))
+    ("euro"   ,(string (code-char 8364)))
+    ("trade"  ,(string (code-char 8424)))
+    ("ndash"  ,(string (code-char 8211)))
+    ("mdash"  ,(string (code-char 8212)))
+    ("lsquo"  ,(string (code-char 8216)))
+    ("rsquo"  ,(string (code-char 8217)))
+    ("sbquo"  ,(string (code-char 8218)))
+    ("ldquo"  ,(string (code-char 8220)))
+    ("rdquo"  ,(string (code-char 8221)))
+    ("bdquo"  ,(string (code-char 8222)))
+    ("hellip" ,(string (code-char 8230)))))
 
 (defun http-scheme (name)
   "Return the scheme keyword for a given scheme or NIL."
@@ -294,6 +326,33 @@
           :for v := (pop q)
           :while k
           :collect (list k (if v (decode-url v) "")))))
+
+(defun encode-html (string)
+  "Replace unrepresentable characters from HTML to &entity; references."
+  (with-output-to-string (s nil :element-type 'character)
+    (flet ((encode (c)
+             (case c
+               (#\< (princ "&lt;" s))
+               (#\> (princ "&gt;" s))
+               (#\& (princ "&amp;" s))
+
+               ;; non-ascii characters
+               (otherwise (let ((n (char-code c)))
+                            (format s "~:[~c~;#~d;~]" (> n 127) c n))))))
+      (loop :for c :across string :do (encode c)))))
+
+(defun decode-html (html)
+  "Replace all &entity; references with their decoded values."
+  (flet ((expand (m)
+           (with-re-match (m m)
+             (cond
+              ((string= "#"  $2) (code-char (parse-integer $3)))
+              ((string= "#x" $2) (code-char (parse-integer $3 :radix 16)))
+              (t                 (let ((e (second (assoc $1 +html-entities+ :test #'string=))))
+                                   (if e
+                                       e
+                                     (prog1 $$ (warn "Unrecognized entity ~s" $1)))))))))
+    (replace-re +ref-re+ #'expand html :all t)))
 
 (defun basic-auth-string (login)
   "Create the basic auth value for the Authorization header."
