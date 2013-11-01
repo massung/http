@@ -191,7 +191,7 @@
   ("^([^/:]+)://"             (values :scheme (http-scheme $1)))
   ("([^:]+):([^@]+)@"         (values :auth (list $1 $2)))
   ("/[^?#]*"                  (values :path $$))
-  ("%?([^#]+)"                (values :query $1))
+  ("%?([^#]*)"                (values :query $1))
   ("#(.*)"                    (values :fragment $1))
   ("[%a%d%-]+"                (values :domain $$))
   (":(%d+)"                   (values :port (parse-integer $1))))
