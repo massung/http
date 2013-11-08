@@ -39,7 +39,6 @@
    ;; macros
    #:with-url
    #:with-headers
-   #:with-response
 
    ;; data post body functions
    #:make-query-string
@@ -141,9 +140,9 @@
   "Reserved URL characters that *must* be encoded.")
 (defconstant +unwise-chars+ '(#\# #\{ #\} #\| #\\ #\^ #\[ #\] #\`)
   "Characters presenting a possibility of being misunderstood and should be encoded.")
-(defconstant +http-schemes+ '((:http 80) (:https 443))
+(defconstant +http-schemes+ '((:http 80) (:https 443) (nil 80))
   "A list of valid HTTP schemes and their default ports.")
-(defconstant +url-format+ "~(~a~)://~@[~{~a:~a~}@~]~a~:[:~a~;~*~]~a~@[?~a~]~@[#~a~]"
+(defconstant +url-format+ "~@[~(~a~):~]//~@[~{~a:~a~}@~]~a~:[:~a~;~*~]~a~@[?~a~]~@[#~a~]"
   "The format options used to recreate a URL string.")
 (defconstant +ref-re+ (compile-re "&((#?x?)([^;]+));")
   "Compiled pattern used for replacing inner-text entity references.")
@@ -189,6 +188,7 @@
 (deflexer url-lexer
   ("%."                       (values :dot))
   ("^([^/:]+)://"             (values :scheme (http-scheme $1)))
+  ("^//"                      (values :scheme nil))
   ("([^:]+):([^@]+)@"         (values :auth (list $1 $2)))
   ("/[^?#]*"                  (values :path $$))
   ("%?([^#]*)"                (values :query $1))
