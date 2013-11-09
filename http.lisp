@@ -153,6 +153,7 @@
     ("lt"     "<")
     ("gt"     ">")
     ("amp"    "&")
+    ("nbsp"   " ")
 
     ;; not in the spec; very common
     ("copy"   ,(string (code-char 169)))
