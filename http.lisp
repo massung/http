@@ -290,9 +290,7 @@
   (with-output-to-string (url)
     (loop :for c :across string
           :do (if (escape-char-p c)
-                  (if (char= c #\space)
-                      (princ #\+ url)
-                    (format url "%~16,2,'0r" (char-code c)))
+                  (format url "%~16,2,'0r" (char-code c))
                 (princ c url)))))
 
 (defun decode-url (url)
