@@ -131,6 +131,12 @@
         resp
       (format stream "~a ~s" code status))))
 
+(defvar *http-request-lock* nil
+  "Controls simultaneous HTTP requests via semaphore.")
+
+(eval-when (:load-toplevel :execute)
+  (setf *http-request-lock* (mp:make-semaphore :name "HTTP Request Lock" :count 20)))
+
 (defparameter *status-re* (compile-re "^HTTP/[^%s]+%s+(%d+)%s+([^%n]+)")
   "Pattern for parsing a response status code and message.")
 (defparameter *header-re* (compile-re "^([^:]+):%s*([^%n]*)")
@@ -411,42 +417,47 @@
       req
     (with-slots (scheme domain path query auth)
         url
-      (with-open-stream (http (open-tcp-stream domain (http-port url) :timeout *http-timeout*))
-        (setf (stream:stream-read-timeout http) *http-timeout*
-              (stream:stream-write-timeout http) *http-timeout*)
+      (when (mp:semaphore-acquire *http-request-lock*)
+        (unwind-protect
+            (with-open-stream (http (open-tcp-stream domain (http-port url) :timeout *http-timeout*))
+              (when http
+                (setf (stream:stream-read-timeout http) *http-timeout*
+                      (stream:stream-write-timeout http) *http-timeout*)
 
-        ;; perform TLS if required by the scheme
-        (when (member scheme '(:https))
-          (attach-ssl http :ssl-side :client))
+                ;; perform TLS if required by the scheme
+                (when (member scheme '(:https))
+                  (attach-ssl http :ssl-side :client))
+              
+                ;; send the formal http request line
+                (format http "~a ~a?~a HTTP/1.1~c~c" method path (make-query-string query) #\return #\linefeed)
+        
+                ;; send headers
+                (format http "Host: ~a~c~c" domain #\return #\linefeed)
+                (format http "Connection: close~c~c" #\return #\linefeed)
+              
+                ;; optionally sent
+                (when data
+                  (format http "Content-Length: ~a~c~c" (length data) #\return #\linefeed))
+                (when auth
+                  (format http "Authorization: ~a~c~c" (basic-auth-string auth) #\return #\linefeed))
+                
+                ;; user headers
+                (dolist (header headers)
+                  (format http "~a: ~a~c~c" (first header) (second header) #\return #\linefeed))
 
-        (format http "~a ~a?~a HTTP/1.1~c~c" method path (make-query-string query) #\return #\linefeed)
+                ;; complete the request
+                (format http "~c~c" #\return #\linefeed)
 
-        ;; send headers
-        (format http "Host: ~a~c~c" domain #\return #\linefeed)
-        (format http "Connection: close~c~c" #\return #\linefeed)
-
-        ;; optionally sent
-        (when data
-          (format http "Content-Length: ~a~c~c" (length data) #\return #\linefeed))
-        (when auth
-          (format http "Authorization: ~a~c~c" (basic-auth-string auth) #\return #\linefeed))
-
-        ;; user headers
-        (dolist (header headers)
-          (format http "~a: ~a~c~c" (first header) (second header) #\return #\linefeed))
-
-        ;; complete the request
-        (format http "~c~c" #\return #\linefeed)
-
-        ;; write optional data to the body
-        (when data
-          (write-sequence data http))
-
-        ;; send all data
-        (force-output http)
-
-        ;; return the response
-        (read-http-response http req)))))
+                ;; write optional data to the body
+                (when data
+                  (write-sequence data http))
+              
+                ;; send all data
+                (force-output http)
+              
+                ;; return the response
+                (read-http-response http req)))
+          (mp:semaphore-release *http-request-lock*))))))
 
 (defun http-simple-perform (url &rest initargs &key method headers data)
   "Parse a URL, create a simple request, and perform the request."
