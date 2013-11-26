@@ -24,6 +24,7 @@
   (:use :cl :lw :system :comm :re :lexer :parsergen :base64)
   (:export
    #:*http-timeout*
+   #:*http-error*
 
    ;; classes
    #:request
@@ -147,6 +148,9 @@
 (defconstant +ref-re+ (compile-re "&((#?x?)([^;]+));")
   "Compiled pattern used for replacing inner-text entity references.")
 
+(defvar *http-error* nil
+  "Set to T if you want http-perform to signal errors.")
+
 (defconstant +html-entities+
   `(("quot"   "\"")
     ("apos"   "'")
@@ -184,7 +188,7 @@
 
 (defun http-port (url)
   "Returns the proper port for a URL given scheme."
-  (or (url-port url) (second (assoc (url-scheme url) +http-schemes+))))
+  (or (url-port url) (second (assoc (url-scheme url) +http-schemes+)) 80))
 
 (deflexer url-lexer
   ("%."                       (values :dot))
@@ -411,7 +415,7 @@
       req
     (with-slots (scheme domain path query auth)
         url
-      (with-open-stream (http (open-tcp-stream domain (http-port url) :errorp t :timeout *http-timeout*))
+      (with-open-stream (http (open-tcp-stream domain (http-port url) :errorp *http-error* :timeout *http-timeout*))
         (when http
           (setf (stream:stream-read-timeout http) *http-timeout*
                 (stream:stream-write-timeout http) *http-timeout*)
