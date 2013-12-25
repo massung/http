@@ -351,7 +351,7 @@
 
                ;; non-ascii characters
                (otherwise (let ((n (char-code c)))
-                            (format s "~:[~c~;#~d;~]" (> n 127) c n))))))
+                            (format s "~:[~c~;#~1*~d;~]" (> n 127) c n))))))
       (loop :for c :across string :do (encode c)))))
 
 (defun decode-html (html)
