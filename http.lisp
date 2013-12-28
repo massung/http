@@ -473,32 +473,33 @@
 
 (defun http-follow (resp &key (limit 3))
   "Follow a reponse's redirection to a new resource location."
-  (with-slots (code request headers)
-      resp
-    (case code
-      ((301 302 303 304 305 307)
-       (if (zerop limit)
-           resp
-         (let ((req (with-headers ((loc "Location" :if-not-found (error "No \"Location\" header.")))
-                        headers
-                      (let ((url (parse-url loc)))
-                        (with-slots (query fragment)
-                            (request-url request)
-                          
-                          ;; if the new url doesn't have a query or fragment, use the old one
-                          (unless (url-query url)
-                            (setf (url-query url) query))
-                          (unless (url-fragment url)
-                            (setf (url-fragment url) fragment))
-                          
-                          ;; create the new request
-                          (make-instance 'request
-                                         :url url
-                                         :data (request-data request)
-                                         :headers (request-headers request)
-                                         :method (if (= code 303) "GET" (request-method request))))))))
-           (http-follow (http-perform req) :limit (1- limit)))))
-      (otherwise resp))))
+  (when resp
+    (with-slots (code request headers)
+        resp
+      (case code
+        ((301 302 303 304 305 307)
+         (if (zerop limit)
+             resp
+           (let ((req (with-headers ((loc "Location" :if-not-found (error "No \"Location\" header.")))
+                          headers
+                        (let ((url (parse-url loc)))
+                          (with-slots (query fragment)
+                              (request-url request)
+                            
+                            ;; if the new url doesn't have a query or fragment, use the old one
+                            (unless (url-query url)
+                              (setf (url-query url) query))
+                            (unless (url-fragment url)
+                              (setf (url-fragment url) fragment))
+                            
+                            ;; create the new request
+                            (make-instance 'request
+                                           :url url
+                                           :data (request-data request)
+                                           :headers (request-headers request)
+                                           :method (if (= code 303) "GET" (request-method request))))))))
+             (http-follow (http-perform req) :limit (1- limit)))))
+        (otherwise resp)))))
 
 (defun http-head (url &key headers)
   "Perform a HEAD request for a URL, return the response."
