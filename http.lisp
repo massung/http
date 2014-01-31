@@ -1,4 +1,4 @@
-;;;; Simple HTTP Package for LispWorks
+;;;; Simple HTTP/HTML Package for LispWorks
 ;;;;
 ;;;; Copyright (c) 2013 by Jeffrey Massung
 ;;;;
@@ -21,7 +21,7 @@
   (require "comm"))
 
 (defpackage :http
-  (:use :cl :lw :system :comm :re :lexer :parsergen :base64)
+  (:use :cl :lw :system :comm :re :lexer :parsergen :base64 :html)
   (:export
    #:*http-timeout*
    #:*http-error*
@@ -46,9 +46,12 @@
    #:make-query-string
    #:parse-query-string
 
-   ;; html text encoding
+   ;; html encoding functions
    #:encode-html
    #:decode-html
+
+   ;; html generation
+   #:html
 
    ;; request functions
    #:http-perform
@@ -146,11 +149,6 @@
   "A list of valid HTTP schemes and their default ports.")
 (defconstant +url-format+ "~@[~(~a~):~]//~@[~{~a:~a~}@~]~a~:[:~a~;~*~]~a~@[?~a~]~@[#~a~]"
   "The format options used to recreate a URL string.")
-(defconstant +ref-re+ (compile-re "&((#?x?)([^;]+));")
-  "Compiled pattern used for replacing inner-text entity references.")
-
-(defvar *http-error* nil
-  "Set to T if you want http-perform to signal errors.")
 
 (defconstant +html-entities+
   `(("quot"   "\"")
@@ -177,6 +175,12 @@
     ("rdquo"  ,(string (code-char 8221)))
     ("bdquo"  ,(string (code-char 8222)))
     ("hellip" ,(string (code-char 8230)))))
+
+(defconstant +ref-re+ (compile-re "&((#?x?)([^;]+));")
+  "Compiled pattern used for replacing inner-text entity references.")
+
+(defvar *http-error* nil
+  "Set to T if you want http-perform to signal errors.")
 
 (defun http-scheme (name)
   "Return the scheme keyword for a given scheme or NIL."
@@ -366,6 +370,28 @@
                                        e
                                      (prog1 $$ (warn "Unrecognized entity ~s" $1)))))))))
     (replace-re +ref-re+ #'expand html :all t)))
+
+(defun html (&rest forms)
+  "Generate HTML from a Lisp s-expression."
+  (with-output-to-string (html nil :element-type 'character)
+    (labels ((gen (form)
+               (typecase form
+                 (keyword   (format html "<~a />" form))
+
+                 ;; a tag with attributes and child elements
+                 (list      (destructuring-bind (tag &optional attrs &rest forms)
+                                form
+                              (format html "<~a~:@{ ~a=~s~}>" tag attrs)
+
+                              ;; write out all the child elements
+                              (mapc #'gen forms)
+
+                              ;; close the tag
+                              (format html "</~a>" tag)))
+               
+                 ;; all other forms should just output a string
+                 (otherwise (princ (encode-html (princ-to-string form)) html)))))
+      (mapc #'gen forms))))
 
 (defun basic-auth-string (login)
   "Create the basic auth value for the Authorization header."
