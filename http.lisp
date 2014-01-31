@@ -21,7 +21,7 @@
   (require "comm"))
 
 (defpackage :http
-  (:use :cl :lw :system :comm :re :lexer :parsergen :base64 :html)
+  (:use :cl :lw :system :comm :re :lexer :parsergen :base64)
   (:export
    #:*http-timeout*
    #:*http-error*
