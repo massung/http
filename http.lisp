@@ -262,14 +262,14 @@
                      (parse-url ,p ,@initargs))))
          (progn ,@body)))))
 
-(defmacro with-response ((resp resp-expr &key timeout errorp if-failed) &body body)
+(defmacro with-response ((resp resp-expr &key timeout errorp) &body body)
   "Execute a request, if successful, execute body with the response variable."
   `(let* ((*http-error* ,errorp)
           (*http-timeout* ,timeout)
           (,resp ,resp-expr))
      (if (and ,resp (<= 200 (response-code ,resp) 299))
          (progn ,@body)
-       ,if-failed)))
+       (values nil ,resp))))
 
 (defmacro with-headers ((&rest bindings) headers-expr &body body)
   "Extract a value from an HTTP header assoc list."
