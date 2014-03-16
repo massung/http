@@ -136,7 +136,7 @@
         resp
       (format stream "~a ~s" code status))))
 
-(defparameter *status-re* (compile-re "^HTTP/[^%s]+%s+(%d+)%s+([^%n]+)")
+(defparameter *status-re* (compile-re "^HTTP/[^%s]+%s+(%d+)%s*([^%n]*)")
   "Pattern for parsing a response status code and message.")
 (defparameter *header-re* (compile-re "^([^:]+):%s*([^%n]*)")
   "Pattern for parsing a response header line.")
