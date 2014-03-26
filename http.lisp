@@ -46,6 +46,9 @@
    #:make-query-string
    #:parse-query-string
 
+   ;; decoding response bodies
+   #:decode-response-body
+
    ;; html encoding functions
    #:encode-html
    #:decode-html
@@ -140,6 +143,8 @@
   "Pattern for parsing a response status code and message.")
 (defparameter *header-re* (compile-re "^([^:]+):%s*([^%n]*)")
   "Pattern for parsing a response header line.")
+(defparameter *charset-re* (compile-re "charset%s*=%s*([%w%-]+)")
+  "Pattern for parsing the character encoding type.")
 
 (defconstant +reserved-chars+ '(#\% #\$ #\& #\+ #\, #\/ #\: #\; #\= #\? #\@)
   "Reserved URL characters that *must* be encoded.")
@@ -397,6 +402,23 @@
   "Create the basic auth value for the Authorization header."
   (let ((auth-string (format nil "~{~a:~a~}" login)))
     (format nil "Basic ~a" (base64-encode auth-string))))
+
+(defun decode-response-body (resp &optional charset)
+  "Use the charset identified in the response Content-Type to decode the response body."
+  (with-headers ((content-type "Content-Type"))
+      (response-headers resp)
+    (let ((format (or charset (with-re-match (match (find-re *charset-re* content-type) :no-match :latin-1)
+                                (cond
+                                 ((string-equal $1 "utf-8") :utf-8)
+                                 ((string-equal $1 "iso-8859-1") :latin-1)
+                                 ((string-equal $1 "shift_jis") :sjis)
+                                 ((string-equal $1 "x-mac-roman") :macos-roman)
+                                 ((string-equal $1 "euc-jp" :euc-jp))
+                                 ((string-equal $1 "jis") :jis))))))
+      (if (null format)
+          (response-body resp)
+        (let ((body (map '(vector (unsigned-byte 8)) #'char-code (response-body resp))))
+          (external-format:decode-external-string body format))))))
 
 (defun read-http-status (http)
   "Parse the line and parse it. Return the code and value."
