@@ -249,6 +249,12 @@
   ((fragment :fragment) `(:fragment ,$1))
   ((fragment)) nil)
 
+(defmethod initialize-instance :after ((url url) &key)
+  "Fix-up work on URLs. Make sure paths are sanitized, etc."
+  (with-slots (path)
+      url
+    (setf path (sanitize-path path))))
+
 (defmacro with-url ((url url-expr &rest initargs &key scheme auth domain port path query fragment) &body body)
   "Parse a URL if necessary, bind it, and execute a body."
   (let ((p (gensym)))
@@ -307,6 +313,14 @@
       ;; reserved and unsafe characters
       (find c +unwise-chars+ :test #'char=)
       (find c +reserved-chars+ :test #'char=)))
+
+(defun sanitize-path (path)
+  "Make sure whitespaces in a path are actually %20."
+  (with-output-to-string (s)
+    (loop :for c :across path
+          :do (if (char= c #\space)
+                  (princ "%20" s)
+                (princ c s)))))
 
 (defun encode-url (string)
   "Convert a string into a URL-safe, encoded string."
