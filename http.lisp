@@ -272,10 +272,12 @@
                      (parse-url ,p ,@initargs))))
          (progn ,@body)))))
 
-(defmacro with-response ((resp resp-expr &key (timeout *http-timeout*) (errorp *http-error*)) &body body)
+(defmacro with-response ((resp resp-expr &key timeout errorp) &body body)
   "Execute a request, if successful, execute body with the response variable."
-  `(let* ((*http-error* ,errorp)
-          (*http-timeout* ,timeout)
+  `(let* (,@(when errorp `((*http-error* ,errorp)))
+          ,@(when timeout `((*http-timeout* ,timeout)))
+
+          ;; execute the request, allow for redirects
           (,resp ,resp-expr))
      (if (and ,resp (<= 200 (response-code ,resp) 299))
          (progn ,@body)
@@ -532,14 +534,14 @@
     (let ((req (apply #'make-instance 'request :url url initargs)))
       (http-perform req))))
 
-(defun http-follow (resp &key (limit 3))
+(defun http-follow (resp &key (redirect-limit 3))
   "Follow a reponse's redirection to a new resource location."
   (when resp
     (with-slots (code request headers)
         resp
       (case code
         ((301 302 303 304 305 307)
-         (if (zerop limit)
+         (if (zerop redirect-limit)
              resp
            (let ((req (with-headers ((loc "Location" :if-not-found (error "No \"Location\" header.")))
                           headers
@@ -559,7 +561,7 @@
                                            :data (request-data request)
                                            :headers (request-headers request)
                                            :method (if (= code 303) "GET" (request-method request))))))))
-             (http-follow (http-perform req) :limit (1- limit)))))
+             (http-follow (http-perform req) :redirect-limit (1- redirect-limit)))))
         (otherwise resp)))))
 
 (defun http-head (url &key headers)
