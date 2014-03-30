@@ -95,6 +95,8 @@
 
 (defparameter *http-timeout* nil
   "Used as the :timeout and :read-timeout to the HTTP stream object.")
+(defparameter *http-error* nil
+  "Set to T if you want http-perform to signal errors.")
 
 (defclass url ()
   ((domain   :initarg :domain   :accessor url-domain)
@@ -184,9 +186,6 @@
 (defconstant +ref-re+ (compile-re "&((#?x?)([^;]+));")
   "Compiled pattern used for replacing inner-text entity references.")
 
-(defvar *http-error* nil
-  "Set to T if you want http-perform to signal errors.")
-
 (defun http-scheme (name)
   "Return the scheme keyword for a given scheme or NIL."
   (flet ((scheme-equal (a b)
@@ -273,7 +272,7 @@
                      (parse-url ,p ,@initargs))))
          (progn ,@body)))))
 
-(defmacro with-response ((resp resp-expr &key timeout errorp) &body body)
+(defmacro with-response ((resp resp-expr &key (timeout *http-timeout*) (errorp *http-error*)) &body body)
   "Execute a request, if successful, execute body with the response variable."
   `(let* ((*http-error* ,errorp)
           (*http-timeout* ,timeout)
@@ -491,7 +490,7 @@
         (when http
           (setf (stream:stream-read-timeout http) *http-timeout*
                 (stream:stream-write-timeout http) *http-timeout*)
-        
+          
           ;; perform TLS if required by the scheme
           (when (member scheme '(:https))
             (attach-ssl http :ssl-side :client))
