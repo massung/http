@@ -391,6 +391,11 @@
                                      (prog1 $$ (warn "Unrecognized entity ~s" $1)))))))))
     (replace-re +ref-re+ #'expand html :all t)))
 
+(defun html-format (stream object colonp atp &rest args)
+  "Outputs encoded HTML text to a string via ~/.../."
+  (declare (ignore colonp atp args))
+  (princ (encode-html (princ-to-string object)) stream))
+
 (defun html (&rest forms)
   "Generate HTML from a Lisp s-expression."
   (with-output-to-string (html nil :element-type 'character)
@@ -401,7 +406,7 @@
                  ;; a tag with attributes and child elements
                  (list      (destructuring-bind (tag &optional attrs &rest forms)
                                 form
-                              (format html "<~a~:@{ ~a=~s~}>" tag attrs)
+                              (format html "<~a~:{ ~a=\"~/http::html-format/\"~}>" tag attrs)
 
                               ;; write out all the child elements
                               (mapc #'gen forms)
