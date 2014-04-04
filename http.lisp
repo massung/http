@@ -100,27 +100,27 @@
 
 (defclass url ()
   ((domain   :initarg :domain   :accessor url-domain)
-   (port     :initarg :port     :accessor url-port     :initform nil)
-   (auth     :initarg :auth     :accessor url-auth     :initform nil)
-   (scheme   :initarg :scheme   :accessor url-scheme   :initform :http)
-   (path     :initarg :path     :accessor url-path     :initform "/")
-   (query    :initarg :query    :accessor url-query    :initform nil)
-   (fragment :initarg :fragment :accessor url-fragment :initform nil))
+   (port     :initarg :port     :accessor url-port         :initform nil)
+   (auth     :initarg :auth     :accessor url-auth         :initform nil)
+   (scheme   :initarg :scheme   :accessor url-scheme       :initform :http)
+   (path     :initarg :path     :accessor url-path         :initform "/")
+   (query    :initarg :query    :accessor url-query        :initform nil)
+   (fragment :initarg :fragment :accessor url-fragment     :initform nil))
   (:documentation "Universal Resource Locator."))
 
 (defclass request ()
   ((url      :initarg :url      :accessor request-url)
-   (method   :initarg :method   :accessor request-method  :initform "GET")
-   (headers  :initarg :headers  :accessor request-headers :initform nil)
-   (data     :initarg :data     :accessor request-data    :initform nil))
+   (method   :initarg :method   :accessor request-method   :initform "GET")
+   (headers  :initarg :headers  :accessor request-headers  :initform nil)
+   (data     :initarg :data     :accessor request-data     :initform nil))
   (:documentation "A request for a URL from an HTTP server."))
 
 (defclass response ()
-  ((code     :initarg :code     :accessor response-code)
-   (status   :initarg :status   :accessor response-status)
-   (headers  :initarg :headers  :accessor response-headers)
-   (body     :initarg :body     :accessor response-body)
-   (request  :initarg :request  :accessor response-request))
+  ((request  :initarg :request  :accessor response-request)
+   (code     :initarg :code     :accessor response-code    :initform 200)
+   (status   :initarg :status   :accessor response-status  :initform "OK")
+   (headers  :initarg :headers  :accessor response-headers :initform nil)
+   (body     :initarg :body     :accessor response-body    :initform nil))
   (:documentation "The response from a request to an HTTP server."))
 
 (defmethod print-object ((url url) s)
@@ -396,27 +396,26 @@
   (declare (ignore colonp atp args))
   (princ (encode-html (princ-to-string object)) stream))
 
-(defun html (&rest forms)
+(defun html (form &optional (stream *standard-output*))
   "Generate HTML from a Lisp s-expression."
-  (with-output-to-string (html nil :element-type 'character)
-    (labels ((gen (form)
-               (typecase form
-                 (keyword   (format html "<~a />" form))
-
-                 ;; a tag with attributes and child elements
-                 (list      (destructuring-bind (tag &optional attrs &rest forms)
-                                form
-                              (format html "<~a~:{ ~a=\"~/http::html-format/\"~}>" tag attrs)
-
-                              ;; write out all the child elements
-                              (mapc #'gen forms)
-
-                              ;; close the tag
-                              (format html "</~a>" tag)))
+  (labels ((gen (form)
+             (typecase form
+               (keyword   (format stream "<~a />" form))
                
-                 ;; all other forms should just output a string
-                 (otherwise (princ (encode-html (princ-to-string form)) html)))))
-      (mapc #'gen forms))))
+               ;; a tag with attributes and child elements
+               (list      (destructuring-bind (tag &optional attrs &rest forms)
+                              form
+                            (format stream "<~a~:{ ~a=\"~/http::html-format/\"~}>" tag attrs)
+                            
+                            ;; write out all the child elements
+                            (mapc #'gen forms)
+                            
+                            ;; close the tag
+                            (format stream "</~a>" tag)))
+               
+               ;; all other forms should just output a string
+               (otherwise (princ (encode-html (princ-to-string form)) stream)))))
+    (gen form)))
 
 (defun basic-auth-string (login)
   "Create the basic auth value for the Authorization header."
