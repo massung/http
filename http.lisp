@@ -49,13 +49,6 @@
    ;; decoding response bodies
    #:decode-response-body
 
-   ;; html encoding functions
-   #:encode-html
-   #:decode-html
-
-   ;; html generation
-   #:html
-
    ;; request functions
    #:http-perform
    #:http-follow
@@ -117,8 +110,8 @@
 
 (defclass response ()
   ((request  :initarg :request  :accessor response-request)
-   (code     :initarg :code     :accessor response-code    :initform 200)
-   (status   :initarg :status   :accessor response-status  :initform "OK")
+   (code     :initarg :code     :accessor response-code)
+   (status   :initarg :status   :accessor response-status  :initform nil)
    (headers  :initarg :headers  :accessor response-headers :initform nil)
    (body     :initarg :body     :accessor response-body    :initform nil))
   (:documentation "The response from a request to an HTTP server."))
@@ -156,35 +149,6 @@
   "A list of valid HTTP schemes and their default ports.")
 (defconstant +url-format+ "~@[~(~a~):~]//~@[~{~a:~a~}@~]~a~:[:~a~;~*~]~a~@[?~a~]~@[#~a~]"
   "The format options used to recreate a URL string.")
-
-(defconstant +html-entities+
-  `(("quot"   "\"")
-    ("apos"   "'")
-    ("lt"     "<")
-    ("gt"     ">")
-    ("amp"    "&")
-    ("nbsp"   " ")
-
-    ;; not in the spec; very common
-    ("copy"   ,(string (code-char 169)))
-    ("reg"    ,(string (code-char 174)))
-    ("cent"   ,(string (code-char 162)))
-    ("pound"  ,(string (code-char 163)))
-    ("yen"    ,(string (code-char 165)))
-    ("euro"   ,(string (code-char 8364)))
-    ("trade"  ,(string (code-char 8424)))
-    ("ndash"  ,(string (code-char 8211)))
-    ("mdash"  ,(string (code-char 8212)))
-    ("lsquo"  ,(string (code-char 8216)))
-    ("rsquo"  ,(string (code-char 8217)))
-    ("sbquo"  ,(string (code-char 8218)))
-    ("ldquo"  ,(string (code-char 8220)))
-    ("rdquo"  ,(string (code-char 8221)))
-    ("bdquo"  ,(string (code-char 8222)))
-    ("hellip" ,(string (code-char 8230)))))
-
-(defconstant +ref-re+ (compile-re "&((#?x?)([^;]+));")
-  "Compiled pattern used for replacing inner-text entity references.")
 
 (defun http-scheme (name)
   "Return the scheme keyword for a given scheme or NIL."
@@ -363,59 +327,6 @@
           :for v := (pop q)
           :while k
           :collect (list k (if v (decode-url v) "")))))
-
-(defun encode-html (string)
-  "Replace unrepresentable characters from HTML to &entity; references."
-  (with-output-to-string (s nil :element-type 'character)
-    (flet ((encode (c)
-             (case c
-               (#\< (princ "&lt;" s))
-               (#\> (princ "&gt;" s))
-               (#\& (princ "&amp;" s))
-
-               ;; non-ascii characters
-               (otherwise (let ((n (char-code c)))
-                            (format s "~:[~c~;#~1*~d;~]" (> n 127) c n))))))
-      (loop :for c :across string :do (encode c)))))
-
-(defun decode-html (html)
-  "Replace all &entity; references with their decoded values."
-  (flet ((expand (m)
-           (with-re-match (m m)
-             (cond
-              ((string= "#"  $2) (code-char (parse-integer $3)))
-              ((string= "#x" $2) (code-char (parse-integer $3 :radix 16)))
-              (t                 (let ((e (second (assoc $1 +html-entities+ :test #'string=))))
-                                   (if e
-                                       e
-                                     (prog1 $$ (warn "Unrecognized entity ~s" $1)))))))))
-    (replace-re +ref-re+ #'expand html :all t)))
-
-(defun html-format (stream object colonp atp &rest args)
-  "Outputs encoded HTML text to a string via ~/.../."
-  (declare (ignore colonp atp args))
-  (princ (encode-html (princ-to-string object)) stream))
-
-(defun html (form &optional (stream *standard-output*))
-  "Generate HTML from a Lisp s-expression."
-  (labels ((gen (form)
-             (typecase form
-               (keyword   (format stream "<~a />" form))
-               
-               ;; a tag with attributes and child elements
-               (list      (destructuring-bind (tag &optional attrs &rest forms)
-                              form
-                            (format stream "<~a~:{ ~a=\"~/http::html-format/\"~}>" tag attrs)
-                            
-                            ;; write out all the child elements
-                            (mapc #'gen forms)
-                            
-                            ;; close the tag
-                            (format stream "</~a>" tag)))
-               
-               ;; all other forms should just output a string
-               (otherwise (princ (encode-html (princ-to-string form)) stream)))))
-    (gen form)))
 
 (defun basic-auth-string (login)
   "Create the basic auth value for the Authorization header."
