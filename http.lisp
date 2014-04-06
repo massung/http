@@ -244,8 +244,8 @@
           ;; execute the request, allow for redirects
           (,resp ,resp-expr))
      (if (and ,resp (<= 200 (response-code ,resp) 299))
-         (progn ,@body)
-       (values nil ,resp))))
+         (values (progn ,@body) t)
+       (values nil nil ,resp))))
 
 (defmacro with-headers ((&rest bindings) headers-expr &body body)
   "Extract a value from an HTTP header assoc list."

@@ -76,7 +76,9 @@
                                    (http-internal-server-error req (princ-to-string e)))))))
                    (send-response resp http))
                (close http)))))
-    (start-up-server :process-name name :function #'accept-request :service port)))
+    (start-up-server :function #'accept-request
+                     :service port
+                     :process-name (format nil "~a on port ~d" name port))))
 
 (defun read-http-request (http)
   "Read from a stream into a request."

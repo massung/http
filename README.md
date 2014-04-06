@@ -2,9 +2,11 @@
 
 The `http` package is a dead-simple package used for performing simple HTTP requests and parsing the responses. It also can parse URLs, escape and unescape strings, and parse query strings.
 
+In addition to being a good HTTP client, it also comes with a bare-bones HTTP server. It will handle parse incominb HTTP requests, hand them off to your handler function, and reply with the response returned by you.
+
 It makes heavy use of my [`re`](http://github.com/massung/re) and [`lexer`](http://www.github.com/massung/lexer) packages, so to understand some of the code you should start with those. But it really is simple. It also uses my [`base64`](http://github.com/massung/base64) package.
 
-## Quickstart
+## The Client Package (`:http`)
 
 After loading the package, the first step is to parse a URL.
 
@@ -126,6 +128,21 @@ The `encode-html` and `decode-html` can be used to replace unicode characters in
 
 	CL-USER > (decode-html "This &mdash; That")
 	"This — That"
+	
+The `with-response` macro can be used when you only care about successful requests (i.e. `(<= 200 response-code 299)` is `T`).
+
+	CL-USER > (with-response (resp (http-get "www.apple.com"))
+	            (response-code resp))
+	200
+	T
+
+This can return up to 3 values. If the request was successful, the return value will be the result of the body and `T` to indicate that the request was successful. If the request failed, the return values will be `NIL` (no result), `NIL` (failure), and the response.
+
+	CL-USER > (with-response (resp (http-get "www.apple.com/foo"))
+	            (response-code resp))
+	NIL
+	NIL
+	#<RESPONSE 404 "Not Found">
 
 The macro `with-headers` is very useful in parsing response (and request) headers and binding keys to values.
 
@@ -139,3 +156,40 @@ The macro `with-headers` is very useful in parsing response (and request) header
 	("1020" "Microsoft-IIS/8.0")
 
 *NOTE: The `:if-not-found` optional argument defaults to `nil`. It is lazily evaluated, so it's the perfect place to signal an `error` if you want to ensure that a particular header exists.*
+
+## The Server Package (`:http-server`)
+
+If you would like to host a simple HTTP server, this package handles accepting the incoming connections, parsing the requests (using the `:http` package), and sending the responses back.
+
+The simplest server you can create would be...
+
+	CL-USER > (simple-http #'http-ok :name "Test Server" :port 8000)
+	#<MP:PROCESS Name "Test Server on port 8000" Priority 3 State "Running">
+	
+Let's test it.
+	
+	CL-USER > (http-get "localhost:8000")
+	#<RESPONSE 200 "OK">
+
+The important argument here is the `#'http-ok`. This is the request handler. It simply takes the `request` object that was parsed, creates a `response`, and returns it. The server then sends the response back to the client.
+
+Kill the current server process, and let's make a different handler function. Then restart the server using the new handler.
+
+	CL-USER > (defun hello-world (req)
+	            (http-ok req "<h1>Hello, world!</h1>"))
+	HELLO-WORLD
+
+	CL-USER > (simple-http #'hello-world)
+	#<MP:PROCESS Name "HTTP Simple Server on port 8000" Priority 3 State "Running">
+
+Finally, let's test it by pointing your browser to [localhost:8000](http://localhost:8000).
+
+## Response Generation
+
+In the example, you probably noticed the `http-ok` function being used to generate the response. The `:http-server` package comes with a myriad of response generation function. They set the correct response code, status message, and allow for an optional body. 
+
+It's probably easiest to just look at `server.lisp` to get the entire list. But all of the major response codes are there (e.g. `http-created`, `http-not-found`, `http-bad-gateway`, ...).
+
+## Generating HTML
+
+If you'd like to generate HTML in your request handler, I suggest you take a look at my [`html`](http://github.com/massung/html) package, which can be used to do so quite efficiently.
