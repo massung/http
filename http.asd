@@ -11,4 +11,4 @@
   :description "HTTP client interface for LispWorks."
   :serial t
   :components ((:file "http") (:file "server"))
-  :depends-on ("lexer" "base64" "html"))
+  :depends-on ("lexer" "base64"))
