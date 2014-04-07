@@ -28,12 +28,12 @@ Finally, `http-perform` will open a socket, issue the request to the server, and
 
 ## Following Redirects
 
-Following a redirect is simply a matter of fetching the "Location" header in the response, creating a new request with the new URL, and then calling `http-perform` with the new request. The `http-follow` function takes a response object (and an optional `:limit` for the number of hops to take) and does just that.
+Following a redirect is simply a matter of fetching the "Location" header in the response, creating a new request with the new URL, and then calling `http-perform` with the new request. The `http-follow` function takes a response object (and an optional `:redirect-limit` for the number of hops to take) and does just that.
 
 	CL-USER > (http-get "google.com")
 	#<RESPONSE 301 "Moved Permanently">
 	
-	CL-USER > (http-follow * :limit 1)
+	CL-USER > (http-follow * :redirect-limit 1)
 	#<RESPONSE 200 "OK">
 
 *NOTE: If the response doesn't contain a new "Location" to follow, an error is signaled.*
