@@ -247,14 +247,25 @@
          (values (progn ,@body) t)
        (values nil nil ,resp))))
 
-(defmacro with-headers ((&rest bindings) headers-expr &body body)
+(defmacro with-headers ((&rest bindings) headers &body body)
   "Extract a value from an HTTP header assoc list."
-  (let ((headers (gensym)))
-    `(let ((,headers ,headers-expr))
-       (let (,@(loop :for binding :in bindings
-                     :collect (destructuring-bind (var key &key if-not-found)
-                                  binding
-                                `(,var (or (second (assoc ,key ,headers :test #'string=)) ,if-not-found)))))
+  (let ((header (gensym))
+        (place (gensym))
+        (key (gensym))
+        (value (gensym)))
+    `(labels ((,header (,key)
+                (second (assoc ,key ,headers :test #'string=)))
+              ((setf ,header) (,value ,key)
+                (let ((,place (assoc ,key ,headers :test #'string=)))
+                  (prog1 ,value (if ,place
+                                    (setf (second ,place) ,value)
+                                  (push (list ,key ,value) ,headers))))))
+       
+       ;; create setf-able bindings
+       (symbol-macrolet (,@(loop :for binding :in bindings
+                                 :collect (destructuring-bind (var key)
+                                              binding
+                                            `(,var (,header ,key)))))
          (progn ,@body)))))
 
 (defun parse-url (url &rest initargs &key scheme auth domain port path query fragment)
@@ -387,10 +398,11 @@
   (multiple-value-bind (code status)
       (read-http-status http)
     (let ((headers (read-http-headers http)))
-      (with-headers ((encoding "Transfer-Encoding" :if-not-found "identity")
+      (with-headers ((encoding "Transfer-Encoding")
                      (content-length "Content-Length"))
           headers
         (let ((body (cond
+                     ((null encoding) (read-http-content http content-length))
                      ((string= encoding "identity") (read-http-content http content-length))
                      ((string= encoding "chunked") (read-http-content-chunked http))
                      (t
@@ -458,8 +470,9 @@
         ((301 302 303 304 305 307)
          (if (zerop redirect-limit)
              resp
-           (let ((req (with-headers ((loc "Location" :if-not-found (error "No \"Location\" header.")))
+           (let ((req (with-headers ((loc "Location"))
                           headers
+                        (assert loc)
                         (let ((url (parse-url loc)))
                           (with-slots (query fragment)
                               (request-url request)
@@ -477,7 +490,7 @@
                                            :headers (request-headers request)
                                            :method (if (= code 303) "GET" (request-method request))))))))
              (http-follow (http-perform req) :redirect-limit (1- redirect-limit)))))
-        (otherwise resp)))))
+      (otherwise resp)))))
 
 (defun http-head (url &key headers)
   "Perform a HEAD request for a URL, return the response."

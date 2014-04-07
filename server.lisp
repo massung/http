@@ -69,11 +69,11 @@
   (flet ((accept-request (h)
            (let ((http (make-instance 'socket-stream :socket h :direction :io :element-type 'base-char)))
              (unwind-protect
-                 (let ((resp (when-let (req (read-http-request http))
-                               (handler-case
-                                   (funcall req-handler req)
-                                 (condition (e)
-                                   (http-internal-server-error req (princ-to-string e)))))))
+                 (when-let (resp (when-let (req (read-http-request http))
+                                   (handler-case
+                                       (funcall req-handler req)
+                                     (condition (e)
+                                       (http-internal-server-error req (princ-to-string e))))))
                    (send-response resp http))
                (close http)))))
     (start-up-server :function #'accept-request
@@ -82,9 +82,9 @@
 
 (defun read-http-request (http)
   "Read from a stream into a request."
-  (with-re-match (m (match-re +request-line-re+ (read-line http)))
+  (with-re-match (m (match-re +request-line-re+ (read-line http nil "")))
     (let ((headers (http::read-http-headers http)))
-      (with-headers ((host "Host" :if-not-found "localhost") (content-length "Content-Length"))
+      (with-headers ((host "Host") (content-length "Content-Length"))
           headers
         (let ((body (when content-length
                       (http::read-http-content http content-length))))
@@ -92,7 +92,7 @@
                          :method $1
                          :headers headers
                          :data body
-                         :url (parse-url (string-append host $2))))))))
+                         :url (parse-url (string-append (or host "localhost") $2))))))))
 
 (defun send-response (response http)
   "Send a response back over the wire."
