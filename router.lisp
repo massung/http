@@ -27,7 +27,7 @@
 (defparameter *route-map* nil
   "All routes defined with define-http-route are added here.")
 
-(defmacro define-http-route ((name req &rest match-args &key) (&rest path) &body body)
+(defmacro define-http-route (name (req (&rest path) &rest match-args &key &allow-other-keys) &body body)
   "Defines a function that will match a request and execute body if successful."
   (let ((route (gensym))
         (handler (gensym))
@@ -43,6 +43,9 @@
            ,route
          (unless (member ,route *route-map* :test 'eq)
            (push ,route *route-map*))))))
+
+(define-http-route hello (req ("hello" target) :method "GET")
+  (http-ok req (format nil "<h1>Hello, ~a</h1>" target)))
 
 (defun route-request (req)
   "Given a request, match a route and execute it."
