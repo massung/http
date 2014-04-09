@@ -303,10 +303,9 @@
           :finally (when (null path-els)
                      (return (values match t))))))
 
-(defun guard-path (path-el &key ok-check (value-function #'identity))
+(defun guard-path (path-el &key (ok-check #'identity) (value-function #'identity))
   "Additional guards for a particular path element."
-  (and (or (null ok-check)
-           (funcall ok-check path-el))
+  (and (funcall ok-check path-el)
 
        ;; all guards matched, return the value
        (values (funcall value-function path-el) t)))
