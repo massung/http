@@ -20,9 +20,18 @@
 (defpackage :http-server
   (:use :cl :lw :comm :mp :re :http)
   (:export
+   #:*request*
+   #:*route-map*
+
+   ;; server startup
    #:simple-http
 
+   ;; route declarations
+   #:define-http-route
+
    ;; response generation
+   #:http-continue
+   #:http-switching-protocols
    #:http-ok
    #:http-created
    #:http-accepted
@@ -64,21 +73,37 @@
 (defconstant +request-line-re+ (compile-re "(%u+)%s+([^%s]+)%s+HTTP/([^%s]+)")
   "HTTP request line pattern.")
 
-(defun simple-http (req-handler &key (name "HTTP Simple Server") (port 8000))
+(defvar *request* nil
+  "The currently active request.")
+
+(defparameter *route-map* nil
+  "All routes defined with define-http-route are added here.")
+
+(defun simple-http (&key (name "HTTP Simple Server") (port 8000))
   "Start a server process that will process incoming HTTP requests."
   (flet ((accept-request (h)
            (let ((http (make-instance 'socket-stream :socket h :direction :io :element-type 'base-char)))
              (unwind-protect
-                 (when-let (resp (when-let (req (read-http-request http))
-                                   (handler-case
-                                       (funcall req-handler req)
-                                     (condition (e)
-                                       (http-internal-server-error req (princ-to-string e))))))
+                 (let ((resp (let ((*request* (read-http-request http)))
+                               (if *request*
+                                   (simple-request-router)
+                                 (http-bad-request)))))
                    (send-response resp http))
                (close http)))))
     (start-up-server :function #'accept-request
                      :service port
                      :process-name (format nil "~a on port ~d" name port))))
+
+(defun simple-request-router ()
+  "Given a request, match a route and execute it."
+  (handler-case
+      (dolist (route *route-map* (http-not-found))
+        (multiple-value-bind (resp okp)
+            (funcall route)
+          (when okp
+            (return resp))))
+    (condition (e)
+      (http-internal-server-error (princ-to-string e)))))
 
 (defun read-http-request (http)
   "Read from a stream into a request."
@@ -126,147 +151,162 @@
 
     ;; make sure anything that has been written flushes
     (force-output http)))
-                      
-(defun http-ok (req &optional body)
-  "The request has succeeded."
-  (make-instance 'response :request req :code 200 :status "OK" :body body))
 
-(defun http-created (req &optional body)
-  "The request has been fulfilled and resulted in a new resource being created."
-  (make-instance 'response :request req :code 201 :status "Created" :body body))
+(defmacro define-http-response (reply code status (&rest headers) &body docstring)
+  "Create an HTTP response generation."
+  (let ((args (mapcar #'gensym headers))
+        (hs (gensym))
+        (body (gensym)))
+    `(defun ,reply (,@args &optional ,body)
+       ,@(let ((doc (first docstring)))
+           (when (stringp doc) (list doc)))
+       (let ((,hs (mapcar #'list ',headers (list ,@args))))
+         (make-instance 'response :request *request* :code ,code :status ,status :headers ,hs :body ,body)))))
 
-(defun http-accepted (req &optional body)
-  "The request has been accepted for processing, but the processing has not been completed."
-  (make-instance 'response :request req :code 202 :status "Accepted" :body body))
+(define-http-response http-continue 100 "Continue" ()
+  "The client should continue with its request.")
+(define-http-response http-switching-protocols 101 "Switching Protocols" ()
+  "The server is willing to comply with the client's request per the Upgrade message header field.")
+(define-http-response http-ok 200 "OK" ()
+  "The request hash-table succeeded.")
+(define-http-response http-created 201 "Created" ()
+  "The request has been fulfilled and resulted in a new resource being created.")
+(define-http-response http-accepted 202 "Accepted" ()
+  "The request has been fulfilled and resulted in a new resource being created.")
+(define-http-response http-non-authoritative 203 "Non-Authoritative Information" ()
+  "The returned information in the header is not the definitive set as available from the origin server.")
+(define-http-response http-no-content 204 "No Content" ()
+  "The server has fulfilled the request but does not need to return an entity-body.")
+(define-http-response http-reset-content 205 "Reset Content" ()
+  "The server has fulfilled the request and the user agent should reset the document view.")
+(define-http-response http-partial-content 206 "Partial Content" ()
+  "The server has fulfilled the partial GET request for the resource.")
+(define-http-response http-moved-permanently 301 "Moved Permanently" ("Location")
+  "The requested resource has been assigned a new permanent URI.")
+(define-http-response http-found 302 "Found" ("Location")
+  "The requested resource resides temporarily under a different URI.")
+(define-http-response http-see-other 303 "See Other" ("Location")
+  "The response to the request can be found under a different URI.")
+(define-http-response http-not-modified 304 "Not Modified" ()
+  "The response to the request can be found under a different URI.")
+(define-http-response http-temporary-redirect 307 "Temporary Redirect" ("Location")
+  "The requested resource resides temporarily under a different URI.")
+(define-http-response http-bad-request 400 "Bad Request" ()
+  "The request could not be understood by the server due to malformed syntax.")
+(define-http-response http-unauthorized 401 "Unauthorized" ()
+  "The request requires user authentication.")
+(define-http-response http-forbidden 403 "Forbidden" ()
+  "The server understood the request, but is refusing to fulfill it.")
+(define-http-response http-not-found 404 "Not Found" ()
+  "The server has not found anything matching the Request-URI.")
+(define-http-response http-method-not-allowed 405 "Method Not Allowed" ()
+  "The server has not found anything matching the Request-URI.")
+(define-http-response http-not-acceptable 406 "Not Acceptable" ()
+  "The resource is only capable of generating contents that are not acceptable according to the Accept header.")
+(define-http-response http-proxy-required 407 "Proxy Required" ()
+  "The client must first authenticate itself with the proxy.")
+(define-http-response http-request-timeout 408 "Request Timeout" ()
+  "The client did not produce a request within the time that the server was prepared to wait.")
+(define-http-response http-conflict 409 "Conflict" ()
+  "The request could not be completed due to a conflict with the current state of the resource.")
+(define-http-response http-gone 410 "Gone" ()
+  "The requested resource is no longer available at the server and no forwarding address is known.")
+(define-http-response http-length-required 411 "Length Required" ()
+  "The server refuses to accept the request without a defined Content-Length.")
+(define-http-response http-precondition-failed 412 "Precondition Failed" ()
+  "The precondition given evaluated to false when it was tested on the server.")
+(define-http-response http-request-too-large 413 "Request Entity Too Large" ()
+  "The server is refusing to process a request because the request entity is too large.")
+(define-http-response http-request-uri-too-long 414 "Request URI Too Long" ()
+  "The server is refusing to service the request because the Request-URI is too long.")
+(define-http-response http-unsupported-media-type 415 "Unsupported Media Type" ()
+  "The server is refusing to service the request because the it is in a format not supported.")
+(define-http-response http-range-not-satisfiable 416 "Request Range Not Satisfiable" ()
+  "The Range request-header field does not overlap the current extent of the selected resource.")
+(define-http-response http-expectation-failed 417 "Expectation Failed" ()
+  "The expectation given in an Expect request-header field could not be met by this server.")
+(define-http-response http-internal-server-error 500 "Internal Server Error" ()
+  "The server encountered an unexpected condition which prevented it from fulfilling the request.")
+(define-http-response http-not-implemented 501 "Not Implemented" ()
+  "The server does not support the functionality required to fulfill the request.")
+(define-http-response http-bad-gateway 502 "Bad Gateway" ()
+  "The server received an invalid response from the upstream server in attempting to fulfill the request.")
+(define-http-response http-service-unavailable 503 "Service Unavailable" ()
+  "The server is currently unable to handle the request.")
+(define-http-response http-gateway-timeout 504 "Gateway Timeout" ()
+  "The server, while acting as a gateway or proxy, did not receive a timely response from the upstream server.")
+(define-http-response http-version-not-supported 505 "HTTP Version Not Supported" ()
+  "The server does not support the HTTP protocol version that was used in the request message.")
 
-(defun http-non-authoritative (req &optional body)
-  "The returned information in the header is not the definitive set as available from the origin server."
-  (make-instance 'response :request req :code 203 :status "Non-Authoritative Information" :body body))
+(defmacro define-http-route (name (&rest path) (&rest match-args &key &allow-other-keys) &body body)
+  "Defines a function that will match a request and execute body if successful."
+  (let ((route (gensym))
+        (handler (gensym))
+        (okp (gensym))
+        (els (gensym)))
+    `(let ((,route (defun ,name ()
+                     (flet ((,handler (,@(route-symbols path)) ,@body))
+                       (multiple-value-bind (,els ,okp)
+                           (match-route ',path ,@match-args)
+                         (when ,okp
+                           (values (apply #',handler ,els) t)))))))
+       (prog1
+           ,route
+         (eval-when (:load-toplevel :execute)
+           (unless (member ,route *route-map* :test 'eq)
+             (push ,route *route-map*)))))))
 
-(defun http-no-content (req &optional body)
-  "The server has fulfilled the request but does not need to return an entity-body."
-  (make-instance 'response :request req :code 204 :status "No Content" :body body))
+(defun route-symbols (route-els)
+  "Returns the symbol list for the route handler."
+  (flet ((el-symbol (route-el)
+           (etypecase route-el
+             (list   (list (first route-el)))
+             (symbol (list route-el))
+             (string ()))))
+    (mapcan #'el-symbol route-els)))
 
-(defun http-reset-content (req &optional body)
-  "The server has fulfilled the request and the user agent should reset the document view."
-  (make-instance 'response :request req :code 205 :status "Reset Content" :body body))
+(defun match-route (route-els &key method)
+  "Attempts to match a request to various parameters."
+  (when (and (or (null method) (string-equal (request-method *request*) method)))
+    (loop :with path-els := (split-sequence "/" (url-path (request-url *request*)) :coalesce-separators t)
+        
+          ;; grab all the route elements to match
+          :for route-el :in route-els
 
-(defun http-partial-content (req &optional body)
-  "The server has fulfilled the partial GET request for the resource."
-  (make-instance 'response :request req :code 206 :status "Partial Content" :body body))
+          ;; look for the rest of the arguments
+          :when (eq route-el '&rest)
+          :return (values (append match path-els) t)
 
-(defun http-moved-permanently (req location &optional body)
-  "The requested resource has been assigned a new permanent URI."
-  (let ((headers `(("Location" ,location))))
-    (make-instance 'response :request req :code 301 :status "Moved Permanently" :body body :headers headers)))
+          ;; symbols extract a path element
+          :when (symbolp route-el)
+          :collect (let ((path-el (pop path-els)))
+                     (if path-el
+                         path-el
+                       (return-from match-route)))
+          :into match
 
-(defun http-found (req location &optional body)
-  "The requested resource resides temporarily under a different URI."
-  (let ((headers `(("Location" ,location))))
-    (make-instance 'response :request req :code 302 :status "Found" :body body :headers headers)))
+          ;; lists are path elements with guards
+          :when (listp route-el)
+          :collect (multiple-value-bind (path-el okp)
+                       (apply #'guard-path (pop path-els) (rest route-el))
+                     (if okp
+                         path-el
+                       (return-from match-route)))
+          :into match
 
-(defun http-see-other (req location &optional body)
-  "The response to the request can be found under a different URI."
-  (let ((headers `(("Location" ,location))))
-    (make-instance 'response :request req :code 303 :status "See Other" :body body :headers headers)))
+          ;; strings match exactly
+          :when (stringp route-el)
+          :do (unless (equal route-el (pop path-els))
+                (return-from match-route))
 
-(defun http-not-modified (req &optional body)
-  "The response to the request can be found under a different URI."
-  (make-instance 'response :request req :code 304 :status "Not Modified" :body body))
+          ;; make sure the path was consumed completely
+          :finally (when (null path-els)
+                     (return (values match t))))))
 
-(defun http-temporary-redirect (req location &optional body)
-  "The requested resource resides temporarily under a different URI."
-  (let ((headers `(("Location" ,location))))
-    (make-instance 'response :request req :code 307 :status "Temporary Redirect" :body body :headers headers)))
+(defun guard-path (path-el &key ok-check (value-function #'identity))
+  "Additional guards for a particular path element."
+  (and (or (null ok-check)
+           (funcall ok-check path-el))
 
-(defun http-bad-request (req &optional body)
-  "The request could not be understood by the server due to malformed syntax."
-  (make-instance 'response :request req :code 400 :status "Bad Request" :body body))
-
-(defun http-unauthorized (req &optional body)
-  "The request requires user authentication."
-  (make-instance 'response :request req :code 401 :status "Unauthorized" :body body))
-
-(defun http-forbidden (req &optional body)
-  "The server understood the request, but is refusing to fulfill it."
-  (make-instance 'response :request req :code 401 :status "Unauthorized" :body body))
-
-(defun http-not-found (req &optional body)
-  "The server has not found anything matching the Request-URI."
-  (make-instance 'response :request req :code 404 :status "Not Found" :body body))
-
-(defun http-method-not-allowed (req &optional body)
-  "The server has not found anything matching the Request-URI."
-  (make-instance 'response :request req :code 405 :status "Method Not Allowed" :body body))
-
-(defun http-not-acceptable (req &optional body)
-  "The resource is only capable of generating contents that are not acceptable according to the Accept header."
-  (make-instance 'response :request req :code 406 :status "Not Acceptable" :body body))
-
-(defun http-proxy-required (req &optional body)
-  "The client must first authenticate itself with the proxy."
-  (make-instance 'response :request req :code 407 :status "Proxy Authentication Required" :body body))
-
-(defun http-request-timeout (req &optional body)
-  "The client did not produce a request within the time that the server was prepared to wait."
-  (make-instance 'response :request req :code 408 :status "Request Timeout" :body body))
-
-(defun http-conflict (req &optional body)
-  "The request could not be completed due to a conflict with the current state of the resource."
-  (make-instance 'response :request req :code 409 :status "Conflict" :body body))
-
-(defun http-gone (req &optional body)
-  "The requested resource is no longer available at the server and no forwarding address is known."
-  (make-instance 'response :request req :code 410 :status "Gone" :body body))
-
-(defun http-length-required (req &optional body)
-  "The server refuses to accept the request without a defined Content-Length."
-  (make-instance 'response :request req :code 411 :status "Length Required" :body body))
-
-(defun http-precondition-failed (req &optional body)
-  "The precondition given evaluated to false when it was tested on the server."
-  (make-instance 'response :request req :code 412 :status "Precondition Failed" :body body))
-
-(defun http-request-too-large (req &optional body)
-  "The server is refusing to process a request because the request entity is too large."
-  (make-instance 'response :request req :code 413 :status "Request Entity Too Large" :body body))
-
-(defun http-request-uri-too-long (req &optional body)
-  "The server is refusing to service the request because the Request-URI is too long."
-  (make-instance 'response :request req :code 414 :status "Request URI Too Long" :body body))
-
-(defun http-unsupported-media-type (req &optional body)
-  "The server is refusing to service the request because the it is in a format not supported."
-  (make-instance 'response :request req :code 415 :status "Unsupported Media Type" :body body))
-
-(defun http-range-not-satisfiable (req &optional body)
-  "The Range request-header field does not overlap the current extent of the selected resource."
-  (make-instance 'response :request req :code 416 :status "Requested Range Not Satisfiable" :body body))
-
-(defun http-expectation-failed (req &optional body)
-  "The expectation given in an Expect request-header field could not be met by this server."
-  (make-instance 'response :request req :code 417 :status "Expectation Failed" :body body))
-
-(defun http-internal-server-error (req &optional body)
-  "The server encountered an unexpected condition which prevented it from fulfilling the request."
-  (make-instance 'response :request req :code 500 :status "Internal Server Error" :body body))
-
-(defun http-not-implemented (req &optional body)
-  "The server does not support the functionality required to fulfill the request."
-  (make-instance 'response :request req :code 501 :status "Not Implemented" :body body))
-
-(defun http-bad-gateway (req &optional body)
-  "The server received an invalid response from the upstream server in attempting to fulfill the request."
-  (make-instance 'response :request req :code 502 :status "Bad Gateway" :body body))
-
-(defun http-service-unavailable (req &optional body)
-  "The server is currently unable to handle the request."
-  (make-instance 'response :request req :code 503 :status "Service Unavailable" :body body))
-
-(defun http-gateway-timeout (req &optional body)
-  "The server, while acting as a gateway or proxy, did not receive a timely response from the upstream server."
-  (make-instance 'response :request req :code 504 :status "Gateway Timeout" :body body))
-
-(defun http-version-not-supported (req &optional body)
-  "The server does not support the HTTP protocol version that was used in the request message."
-  (make-instance 'response :request req :code 505 :status "HTTP Version Not Supported" :body body))
+       ;; all guards matched, return the value
+       (values (funcall value-function path-el) t)))

@@ -149,40 +149,57 @@ The macro `with-headers` is very useful in parsing response (and request) header
 	CL-USER > (http-get "www.microsoft.com")
 	#<RESPONSE 200 "OK">
 
-	CL-USER > (with-headers ((server "Server" :if-not-found "unknown")
+	CL-USER > (with-headers ((server "Server")
 	                         (content-length "Content-Length"))
 	              (response-headers *)
 	            (list content-length server))
 	("1020" "Microsoft-IIS/8.0")
 
-*NOTE: The `:if-not-found` optional argument defaults to `nil`. It is lazily evaluated, so it's the perfect place to signal an `error` if you want to ensure that a particular header exists.*
+*NOTE: All the header variables bound are `setf`-able. You can use this to add headers to a request (or a response).*
 
 ## The Server Package (`:http-server`)
 
-If you would like to host a simple HTTP server, this package handles accepting the incoming connections, parsing the requests (using the `:http` package), and sending the responses back.
+If you would like to host a simple HTTP server, this package handles accepting the incoming connections, parsing the requests, and sending your responses back.
 
 The simplest server you can create would be...
 
-	CL-USER > (simple-http #'http-ok :name "Test Server" :port 8000)
-	#<MP:PROCESS Name "Test Server on port 8000" Priority 3 State "Running">
+	CL-USER > (simple-http :port 8000)
+	#<MP:PROCESS Name "HTTP Simple Server on port 8000" Priority 3 State "Running">
 	
 Let's test it.
 	
 	CL-USER > (http-get "localhost:8000")
+	#<RESPONSE 404 "Not Found">
+
+We got a 404 back because we haven't defined any routes for the server to test against. Routes are created with the `define-http-route` macro.
+
+	CL-USER > (define-http-route index ()
+	              ()
+	            (http-ok "Hello, world!"))
+	INDEX
+
+Now let's test our new route.
+
+	CL-USER > (http-get "localhost:8000")
 	#<RESPONSE 200 "OK">
 
-The important argument here is the `#'http-ok`. This is the request handler. It simply takes the `request` object that was parsed, creates a `response`, and returns it. The server then sends the response back to the client.
+	CL-USER > (response-body *)
+	"Hello, world!"
 
-Kill the current server process, and let's make a different handler function. Then restart the server using the new handler.
+The `define-http-route` macro is broken up into 3 main parts: the path-spec, the route guards, and the body. The path-spec is the path in the request to the server. Each element in the path-spec can be a string, a symbol, or a list. The following are all examples of path-specs:
 
-	CL-USER > (defun hello-world (req)
-	            (http-ok req "<h1>Hello, world!</h1>"))
-	HELLO-WORLD
+	("index.html")
+	("hello" target)
+	("forum" forum-id "thread" thread-id)
 
-	CL-USER > (simple-http #'hello-world)
-	#<MP:PROCESS Name "HTTP Simple Server on port 8000" Priority 3 State "Running">
+Let's modify the path-spec in our route to say hello to many people.
 
-Finally, let's test it by pointing your browser to [localhost:8000](http://localhost:8000).
+	CL-USER > (define-http-route index ("hello" &rest names)
+	              ()
+	            (http-ok (format nil "Hello to ~{~:(~a~)~^, ~}" names)))
+	INDEX
+
+Let's test it by pointing your browser to [localhost:8000/hello/jeff/tom/dan](http://localhost:8000/hello/jeff/tom/dan).
 
 ## Response Generation
 
