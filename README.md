@@ -132,7 +132,7 @@ The `http` package also comes with quite a few helper functions to assist you in
 The `encode-url` function takes a string and makes sure that all characters are properly encoded for the query string of a URL.
 
 	CL-USER > (encode-url "$9.50+/-5 cents")
-	"%249.50%2B%2F-5+cents"
+	"%249.50%2B%2F-5%20cents"
 
 The inverse is `decode-url`, which given an encoded string will decode it into the original value.
 
