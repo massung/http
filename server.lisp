@@ -108,16 +108,22 @@
 (defun read-http-request (http)
   "Read from a stream into a request."
   (with-re-match (m (match-re +request-line-re+ (read-line http nil "")))
-    (let ((headers (http::read-http-headers http)))
-      (with-headers ((host "Host") (content-length "Content-Length"))
-          headers
-        (let ((body (when content-length
-                      (http::read-http-content http content-length))))
-          (make-instance 'request
-                         :method $1
-                         :headers headers
-                         :data body
-                         :url (parse-url (string-append (or host "localhost") $2))))))))
+    (let* ((headers (http::read-http-headers http))
+
+           ;; extract the Host and Content-Length from the request
+           (host (second (assoc "Host" headers :test #'string-equal)))
+           (content-length (second (assoc "Content-Length" headers :test #'string-equal)))
+
+           ;; parse the body if there is content
+           (body (when content-length
+                   (http::read-http-content http content-length))))
+
+      ;; create the request object
+      (make-instance 'request
+                     :method $1
+                     :headers headers
+                     :data body
+                     :url (parse-url (string-append (or host "localhost") $2))))))
 
 (defun send-response (response http)
   "Send a response back over the wire."
@@ -125,7 +131,7 @@
       (let ((code (response-code response))
             (status (response-status response))
             (body (response-body response))
-            (headers (response-headers response))
+            (headers (http-headers response))
             (req (response-request response)))
 
         ;; send the code and status string
@@ -267,7 +273,7 @@
 
 (defun match-route (route-els &key method)
   "Attempts to match a request to various parameters."
-  (when (and (or (null method) (string-equal (request-method *request*) method)))
+  (when (and (guard-method method))
     (loop :with path-els := (split-sequence "/" (url-path (request-url *request*)) :coalesce-separators t)
         
           ;; grab all the route elements to match
@@ -302,6 +308,17 @@
           ;; make sure the path was consumed completely
           :finally (when (null path-els)
                      (return (values match t))))))
+
+(defun guard-method (method)
+  "Checks to see if the method matches the request."
+  (or (null method)
+
+      ;; does the method match?
+      (string-equal (request-method *request*) method)
+
+      ;; HEAD requests should match GET guards
+      (and (string-equal :get method)
+           (string-equal :head (request-method *request*)))))
 
 (defun guard-path (path-el &key (ok-check #'identity) (value-function #'identity))
   "Additional guards for a particular path element."

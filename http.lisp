@@ -49,6 +49,10 @@
    ;; decoding response bodies
    #:decode-response-body
 
+   ;; header accessors
+   #:http-headers
+   #:http-header
+
    ;; request functions
    #:http-perform
    #:http-follow
@@ -74,13 +78,11 @@
    ;; http request accessors
    #:request-url
    #:request-method
-   #:request-headers
    #:request-data
 
    ;; response accessors
    #:response-code
    #:response-status
-   #:response-headers
    #:response-body
    #:response-request))
 
@@ -101,18 +103,20 @@
    (fragment :initarg :fragment :accessor url-fragment     :initform nil))
   (:documentation "Universal Resource Locator."))
 
-(defclass request ()
+(defclass headers ()
+  ((headers  :initarg :headers  :accessor http-headers     :initform nil))
+  (:documentation "Base class for requests and responses."))
+
+(defclass request (headers)
   ((url      :initarg :url      :accessor request-url)
    (method   :initarg :method   :accessor request-method   :initform "GET")
-   (headers  :initarg :headers  :accessor request-headers  :initform nil)
    (data     :initarg :data     :accessor request-data     :initform nil))
   (:documentation "A request for a URL from an HTTP server."))
 
-(defclass response ()
+(defclass response (headers)
   ((request  :initarg :request  :accessor response-request)
    (code     :initarg :code     :accessor response-code)
    (status   :initarg :status   :accessor response-status  :initform nil)
-   (headers  :initarg :headers  :accessor response-headers :initform nil)
    (body     :initarg :body     :accessor response-body    :initform nil))
   (:documentation "The response from a request to an HTTP server."))
 
@@ -247,26 +251,13 @@
          (values (progn ,@body) t)
        (values nil nil ,resp))))
 
-(defmacro with-headers ((&rest bindings) headers &body body)
+(defmacro with-headers ((&rest bindings) object &body body)
   "Extract a value from an HTTP header assoc list."
-  (let ((header (gensym))
-        (place (gensym))
-        (key (gensym))
-        (value (gensym)))
-    `(labels ((,header (,key)
-                (second (assoc ,key ,headers :test #'string=)))
-              ((setf ,header) (,value ,key)
-                (let ((,place (assoc ,key ,headers :test #'string=)))
-                  (prog1 ,value (if ,place
-                                    (setf (second ,place) ,value)
-                                  (push (list ,key ,value) ,headers))))))
-       
-       ;; create setf-able bindings
-       (symbol-macrolet (,@(loop :for binding :in bindings
-                                 :collect (destructuring-bind (var key)
-                                              binding
-                                            `(,var (,header ,key)))))
-         (progn ,@body)))))
+  `(symbol-macrolet (,@(loop :for binding :in bindings
+                             :collect (destructuring-bind (var key)
+                                          binding
+                                        `(,var (http-header ,object ,key)))))
+     (progn ,@body)))
 
 (defun parse-url (url &rest initargs &key scheme auth domain port path query fragment)
   "Parse a URL and return. If URL is relative, set what it's relative to."
@@ -347,7 +338,7 @@
 (defun decode-response-body (resp &optional charset)
   "Use the charset identified in the response Content-Type to decode the response body."
   (with-headers ((content-type "Content-Type"))
-      (response-headers resp)
+      resp
     (let ((format (or charset (with-re-match (match (find-re *charset-re* content-type) :no-match :latin-1)
                                 (cond
                                  ((string-equal $1 "utf-8") :utf-8)
@@ -360,6 +351,24 @@
           (response-body resp)
         (let ((body (map '(vector (unsigned-byte 8)) #'char-code (response-body resp))))
           (external-format:decode-external-string body format))))))
+
+(defun http-header (hs header)
+  "Returns the value of a request header."
+  (second (assoc header (http-headers hs) :test #'string-equal)))
+
+(defsetf http-header (headers header) (value)
+  "Add or change the value of a request header."
+  (let ((place (gensym))
+        (h (gensym))
+        (hs (gensym))
+        (new-value (gensym)))
+    `(let* ((,hs ,headers)
+            (,h ,header)
+            (,new-value (princ-to-string ,value))
+            (,place (assoc ,h (http-headers ,hs) :test #'string-equal)))
+       (prog1 ,new-value (if ,place
+                             (setf (second ,place) ,new-value)
+                           (push (list ,h ,new-value) (http-headers ,hs)))))))
 
 (defun read-http-status (http)
   "Parse the line and parse it. Return the code and value."
@@ -397,17 +406,20 @@
   "Read a response string from an HTTP socket stream and parse it."
   (multiple-value-bind (code status)
       (read-http-status http)
-    (let ((headers (read-http-headers http)))
-      (with-headers ((encoding "Transfer-Encoding")
-                     (content-length "Content-Length"))
-          headers
-        (let ((body (cond
-                     ((null encoding) (read-http-content http content-length))
-                     ((string= encoding "identity") (read-http-content http content-length))
-                     ((string= encoding "chunked") (read-http-content-chunked http))
-                     (t
-                      (error "Unknown Transfer-Encoding ~s" encoding)))))
-          (make-instance 'response :request req :code code :status status :headers headers :body body))))))
+    (let* ((headers (read-http-headers http))
+
+           ;; get the transfer encoding style and the content length
+           (encoding (second (assoc "Transfer-Encoding" headers :test #'string-equal)))
+           (content-length (second (assoc "Content-Length" headers :test #'string-equal)))
+
+           ;; read the body
+           (body (cond
+                  ((null encoding) (read-http-content http content-length))
+                  ((string= encoding "identity") (read-http-content http content-length))
+                  ((string= encoding "chunked") (read-http-content-chunked http))
+                  (t
+                   (error "Unknown Transfer-Encoding ~s" encoding)))))
+      (make-instance 'response :request req :code code :status status :headers headers :body body))))
 
 (defun http-perform (req)
   "Perform a generic HTTP request, return the request and body."
@@ -464,31 +476,28 @@
 (defun http-follow (resp &key (redirect-limit 3))
   "Follow a reponse's redirection to a new resource location."
   (when resp
-    (with-slots (code request headers)
+    (with-slots (code request)
         resp
       (case code
         ((301 302 303 304 305 307)
          (if (zerop redirect-limit)
              resp
-           (let ((req (with-headers ((loc "Location"))
-                          headers
-                        (assert loc)
-                        (let ((url (parse-url loc)))
-                          (with-slots (query fragment)
-                              (request-url request)
+           (let ((req (let ((url (parse-url (http-header resp "Location"))))
+                        (with-slots (query fragment)
+                            (request-url request)
                             
-                            ;; if the new url doesn't have a query or fragment, use the old one
-                            (unless (url-query url)
-                              (setf (url-query url) query))
-                            (unless (url-fragment url)
-                              (setf (url-fragment url) fragment))
+                          ;; if the new url doesn't have a query or fragment, use the old one
+                          (unless (url-query url)
+                            (setf (url-query url) query))
+                          (unless (url-fragment url)
+                            (setf (url-fragment url) fragment))
                             
-                            ;; create the new request
-                            (make-instance 'request
-                                           :url url
-                                           :data (request-data request)
-                                           :headers (request-headers request)
-                                           :method (if (= code 303) "GET" (request-method request))))))))
+                          ;; create the new request
+                          (make-instance 'request
+                                         :url url
+                                         :data (request-data request)
+                                         :headers (http-headers request)
+                                         :method (if (= code 303) "GET" (request-method request)))))))
              (http-follow (http-perform req) :redirect-limit (1- redirect-limit)))))
       (otherwise resp)))))
 

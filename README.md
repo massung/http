@@ -38,6 +38,37 @@ Following a redirect is simply a matter of fetching the "Location" header in the
 
 *NOTE: If the response doesn't contain a new "Location" to follow, an error is signaled.*
 
+## Parsing Headers
+
+Both `request` and `response` objects derive from the same base class which contains headers. The `http-headers` accessor method can be used to both extract and set the headers of a request or response.
+
+	CL-USER > (http-headers (http-get "google.com"))
+	(("Location" "http://www.google.com/")
+	 ("Content-Type" "text/html; charset=UTF-8")
+	 ("Date" "Thu, 10 Apr 2014 18:08:21 GMT")
+	 ("Expires" "Sat, 10 May 2014 18:08:21 GMT")
+	 ("Cache-Control" "public, max-age=2592000")
+	 ("Server" "gws")
+	 ("Content-Length" "219")
+	 ("X-XSS-Protection" "1; mode=block")
+	 ("X-Frame-Options" "SAMEORIGIN")
+	 ("Alternate-Protocol" "80:quic")
+	 ("Connection" "close"))
+
+There is the method `http-header` that can be used to extract a single header from a request or response.
+
+	CL-USER (http-header (http-get "google.com") "Location") 
+	"http://www.google.com/"
+
+The `http-header` method is also `setf`-able, and can be used to change or add headers to a request or response.
+
+Finally, the `with-headers` macro is useful if you would like to bind variables to header values and also make them `setf`-able within a body of code.
+
+	CL-USER > (with-headers ((dummy "x-my-dummy-header"))
+	              (http-get "google.com")
+	            (setf dummy "My dummy value"))
+	"My dummy value"
+
 ## Handling Encoded Content
 
 By default, the `http` package won't send an "Accept-Encoding" header with your request. Without this, a server shouldn't send an encoded body. You can, however, send the header yourself, and then decode the body after you have received a response.
@@ -47,14 +78,13 @@ By default, the `http` package won't send an "Accept-Encoding" header with your 
 
 Now, assuming you have a function `gzip:unzip`, you can decode the body with something like this:
 
-	CL-USER > (with-headers ((encoding "Content-Encoding" :if-not-found "identity"))
-	              (response-headers *)
-	            (let ((decoder (cond
-	                            ((string= encoding "identity") #'identity)
-	                            ((string= encoding "gzip") #'gzip:unzip)
-	                            (t
-	                             (error "Unknown Content-Encoding: ~a" encoding)))))
-	              (funcall decoder (response-body *))))
+	CL-USER > (let* ((encoding (http-header * "Content-Encoding"))
+	                 (decoder (cond
+	                           ((string= encoding "identity") #'identity)
+	                           ((string= encoding "gzip") #'gzip:unzip)
+	                           (t
+	                            (error "Unknown Content-Encoding: ~a" encoding)))))
+	            (funcall decoder (response-body *))))
 
 *NOTE: At some point the "gzip" encoding will be added to the `http` package and this will be done for you.*
 
@@ -120,14 +150,6 @@ The inverse of `make-query-string` is `parse-query-string`. Given a query string
 	(("q" "henry gale") ("limit" "10"))
 	
 *NOTE: While `make-query-string` takes any value and converts it to a string, `parse-query-string` will only return strings for values as it is unaware of the type. It's up to you to parse the value appropriately.*
-
-The `encode-html` and `decode-html` can be used to replace unicode characters in a string.
-
-	CL-USER > (encode-html "<this>")
-	"&lt;this&gt;"
-
-	CL-USER > (decode-html "This &mdash; That")
-	"This — That"
 	
 The `with-response` macro can be used when you only care about successful requests (i.e. `(<= 200 response-code 299)` is `T`).
 
@@ -143,19 +165,6 @@ This can return up to 3 values. If the request was successful, the return value 
 	NIL
 	NIL
 	#<RESPONSE 404 "Not Found">
-
-The macro `with-headers` is very useful in parsing response (and request) headers and binding keys to values.
-
-	CL-USER > (http-get "www.microsoft.com")
-	#<RESPONSE 200 "OK">
-
-	CL-USER > (with-headers ((server "Server")
-	                         (content-length "Content-Length"))
-	              (response-headers *)
-	            (list content-length server))
-	("1020" "Microsoft-IIS/8.0")
-
-*NOTE: All the header variables bound are `setf`-able. You can use this to add headers to a request (or a response).*
 
 ## The Server Package (`:http-server`)
 
@@ -186,11 +195,22 @@ Now let's test our new route.
 	CL-USER > (response-body *)
 	"Hello, world!"
 
-The `define-http-route` macro is broken up into 3 main parts: the path-spec, the route guards, and the body. The path-spec is the path in the request to the server. Each element in the path-spec can be a string, a symbol, or a list. The following are all examples of path-specs:
+The `define-http-route` macro is broken up into 3 main parts: the path-spec, route guards, and body. The path-spec is the path in the request to the server. Each element in the path-spec can be a string, a symbol, or a list. The following are all examples of path-specs:
 
+	;; /index.html
 	("index.html")
+
+	;; /hello/:target
 	("hello" target)
+
+	;; /forum/:forum-id/thread/:thread-id
 	("forum" forum-id "thread" thread-id)
+
+	;; /user/:user-id
+	("user" (user-id :value-function #'parse-integer))
+
+	;; /static/...
+	("static" &rest path)
 
 Let's modify the path-spec in our route to say hello to many people.
 
@@ -206,6 +226,8 @@ Let's test it by pointing your browser to [localhost:8000/hello/jeff/tom/dan](ht
 In the example, you probably noticed the `http-ok` function being used to generate the response. The `:http-server` package comes with a myriad of response generation function. They set the correct response code, status message, and allow for an optional body. 
 
 It's probably easiest to just look at `server.lisp` to get the entire list. But all of the major response codes are there (e.g. `http-created`, `http-not-found`, `http-bad-gateway`, ...).
+
+While for simple cases you'll just be creating and returning the response at the same time, you can also create a response, modify it (e.g. set headers), and then return it.
 
 ## Generating HTML
 
