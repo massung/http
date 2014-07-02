@@ -110,12 +110,12 @@ This is extremely handy.
 
 While that was an overview of what's going on under-the-hood, those three steps are wrapped up nicely in the following helper functions:
 
-	(http-head url &key headers)
-	(http-get url &key headers)
-	(http-delete url &key headers)
-	(http-put url &key headers data)
-	(http-post url &key headers data)
-	(http-patch url &key headers data)
+	(http-head url &key headers redirect-limit)
+	(http-get url &key headers redirect-limit)
+	(http-delete url &key headers redirect-limit)
+	(http-put url &key headers data redirect-limit)
+	(http-post url &key headers data redirect-limit)
+	(http-patch url &key headers data redirect-limit)
 
 Each of these functions use the `with-url` macro, allowing you to pass either a `url` object or a string.
 
@@ -124,6 +124,8 @@ The optional `headers` should be an associative list of key/value strings that w
 *NOTE: `http-perform` already takes care of any obvious headers that will need to be sent: Host, Connection, Content-Length, and Authorization.*
 
 PUT, POST, and PATCH requests have an optional `data` argument, which is what is sent in the body of the request. *At this time there is no support for multi-part posts*.
+
+The `redirect-limit` defaults to 3. 
 
 ## Additional Utility Functions
 
@@ -195,7 +197,9 @@ Now let's test our new route.
 	CL-USER > (response-body *)
 	"Hello, world!"
 
-The `define-http-route` macro is broken up into 3 main parts: the path-spec, route guards, and body. The path-spec is the path in the request to the server. Each element in the path-spec can be a string, a symbol, or a list. The following are all examples of path-specs:
+The `define-http-route` macro is broken up into 3 main parts: the path-spec, route guards, and body. The path-spec is the path in the request to the server. Each element in the path-spec can be a string, a symbol, or a list. 
+
+The following are all examples of path-specs:
 
 	;; /index.html
 	("index.html")
@@ -206,16 +210,18 @@ The `define-http-route` macro is broken up into 3 main parts: the path-spec, rou
 	;; /forum/:forum-id/thread/:thread-id
 	("forum" forum-id "thread" thread-id)
 
-	;; /user/:user-id
-	("user" (user-id :value-function #'parse-integer))
-
 	;; /static/...
 	("static" &rest path)
+
+Route guards are additional tests that are performed and must return `T` for the route body to be executed. These tests are predefined and are the keyword arguments to [`match-route`](https://github.com/massung/http/blob/master/server.lisp#L274).
+
+	;; example guards
+	(:methods '(:put :post))
 
 Let's modify the path-spec in our route to say hello to many people.
 
 	CL-USER > (define-http-route index ("hello" &rest names)
-	              ()
+	              (:methods '("GET"))
 	            (http-ok (format nil "Hello to ~{~:(~a~)~^, ~}" names)))
 	INDEX
 

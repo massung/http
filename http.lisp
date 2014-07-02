@@ -412,13 +412,14 @@
            (encoding (second (assoc "Transfer-Encoding" headers :test #'string-equal)))
            (content-length (second (assoc "Content-Length" headers :test #'string-equal)))
 
-           ;; read the body
-           (body (cond
-                  ((null encoding) (read-http-content http content-length))
-                  ((string= encoding "identity") (read-http-content http content-length))
-                  ((string= encoding "chunked") (read-http-content-chunked http))
-                  (t
-                   (error "Unknown Transfer-Encoding ~s" encoding)))))
+           ;; read the body unless a head request
+           (body (unless (string-equal (request-method req) "HEAD")
+                   (cond
+                    ((null encoding) (read-http-content http content-length))
+                    ((string= encoding "identity") (read-http-content http content-length))
+                    ((string= encoding "chunked") (read-http-content-chunked http))
+                    (t
+                     (error "Unknown Transfer-Encoding ~s" encoding))))))
       (make-instance 'response :request req :code code :status status :headers headers :body body))))
 
 (defun http-perform (req)
@@ -501,34 +502,41 @@
              (http-follow (http-perform req) :redirect-limit (1- redirect-limit)))))
       (otherwise resp)))))
 
-(defun http-head (url &key headers)
+(defun http-head (url &key headers (redirect-limit 3))
   "Perform a HEAD request for a URL, return the response."
-  (http-simple-perform url :method "HEAD" :headers headers))
+  (let ((resp (http-simple-perform url :method "HEAD" :headers headers)))
+    (http-follow resp :redirect-limit redirect-limit)))
 
-(defun http-get (url &key headers)
+(defun http-get (url &key headers (redirect-limit 3))
   "Perform a GET request for a URL, return the response."
-  (http-simple-perform url :method "GET" :headers headers))
+  (let ((resp (http-simple-perform url :method "GET" :headers headers)))
+    (http-follow resp :redirect-limit redirect-limit)))
 
-(defun http-options (url &key headers)
+(defun http-options (url &key headers (redirect-limit 3))
   "Perform an OPTIONS request for a URL, return the response."
-  (http-simple-perform url :method "OPTIONS" :headers headers))
+  (let ((resp (http-simple-perform url :method "OPTIONS" :headers headers)))
+    (http-follow resp :redirect-limit redirect-limit)))
 
-(defun http-trace (url &key headers)
+(defun http-trace (url &key headers (redirect-limit 3))
   "Perform an OPTIONS request for a URL, return the response."
-  (http-simple-perform url :method "TRACE" :headers headers))
+  (let ((resp (http-simple-perform url :method "TRACE" :headers headers)))
+    (http-follow resp :redirect-limit redirect-limit)))
 
-(defun http-delete (url &key headers)
+(defun http-delete (url &key headers (redirect-limit 3))
   "Perform a DELETE request for a URL, return the response."
-  (http-simple-perform url :method "DELETE" :headers headers))
+  (let ((resp (http-simple-perform url :method "DELETE" :headers headers)))
+    (http-follow resp :redirect-limit redirect-limit)))
 
-(defun http-put (url &key headers data)
+(defun http-put (url &key headers data (redirect-limit 3))
   "Perform a PUT request for a URL, return the response."
-  (http-simple-perform url :method "PUT" :headers headers :data data))
+  (let ((resp (http-simple-perform url :method "PUT" :headers headers :data data)))
+    (http-follow resp :redirect-limit redirect-limit)))
 
-(defun http-post (url &key headers data)
+(defun http-post (url &key headers data (redirect-limit 3))
   "Perform a POST request for a URL, return the response."
-  (http-simple-perform url :method "POST" :headers headers :data data))
+  (http-follow (http-simple-perform url :method "POST" :headers headers :data data) :redirect-limit redirect-limit))
 
-(defun http-patch (url &key headers data)
+(defun http-patch (url &key headers data (redirect-limit 3))
   "Perform a PATCH request for a URL, return the response."
-  (http-simple-perform url :method "PATCH" :headers headers :data data))
+  (let ((resp (http-simple-perform url :method "PATCH" :headers headers :data data)))
+    (http-follow resp :redirect-limit redirect-limit)))

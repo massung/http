@@ -244,7 +244,7 @@
 (define-http-response http-version-not-supported 505 "HTTP Version Not Supported" ()
   "The server does not support the HTTP protocol version that was used in the request message.")
 
-(defmacro define-http-route (name (&rest path) (&rest match-args &key &allow-other-keys) &body body)
+(defmacro define-http-route (name (&rest path) (&rest guards &key &allow-other-keys) &body body)
   "Defines a function that will match a request and execute body if successful."
   (let ((route (gensym))
         (handler (gensym))
@@ -253,7 +253,7 @@
     `(let ((,route (defun ,name ()
                      (flet ((,handler (,@(route-symbols path)) ,@body))
                        (multiple-value-bind (,els ,okp)
-                           (match-route ',path ,@match-args)
+                           (match-route ',path ,@guards)
                          (when ,okp
                            (values (apply #',handler ,els) t)))))))
        (prog1
@@ -271,11 +271,11 @@
              (string ()))))
     (mapcan #'el-symbol route-els)))
 
-(defun match-route (route-els &key method)
+(defun match-route (route-els &key methods)
   "Attempts to match a request to various parameters."
-  (when (and (guard-method method))
+  (when (and (guard-method methods))
     (loop :with path-els := (split-sequence "/" (url-path (request-url *request*)) :coalesce-separators t)
-        
+          
           ;; grab all the route elements to match
           :for route-el :in route-els
 
@@ -309,16 +309,15 @@
           :finally (when (null path-els)
                      (return (values match t))))))
 
-(defun guard-method (method)
+(defun guard-method (methods)
   "Checks to see if the method matches the request."
-  (or (null method)
+  (flet ((method-equal (a b)
+           (string-equal (if (string-equal a :head) :get a)
+                         (if (string-equal b :head) :get b))))
+    (or (null methods)
 
-      ;; does the method match?
-      (string-equal (request-method *request*) method)
-
-      ;; HEAD requests should match GET guards
-      (and (string-equal :get method)
-           (string-equal :head (request-method *request*)))))
+        ;; does the method match any accepted?
+        (find (request-method *request*) methods :test #'method-equal))))
 
 (defun guard-path (path-el &key (ok-check #'identity) (value-function #'identity))
   "Additional guards for a particular path element."
