@@ -440,9 +440,10 @@
           ;; send the formal http request line
           (format http "~a ~a?~a HTTP/1.1~c~c" method path (make-query-string query) #\return #\linefeed)
         
-          ;; send headers
+          ;; send common headers
           (format http "Host: ~a~c~c" domain #\return #\linefeed)
           (format http "Connection: close~c~c" #\return #\linefeed)
+          (format http "User-Agent: lispworks~c~c" #\return #\linefeed)
           
           ;; optionally sent
           (when data
