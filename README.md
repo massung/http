@@ -174,62 +174,22 @@ If you would like to host a simple HTTP server, this package handles accepting t
 
 The simplest server you can create would be...
 
-	CL-USER > (simple-http :port 8000)
+	CL-USER > (simple-http #'(lambda (req) (http-ok "Hello, world!")))
 	#<MP:PROCESS Name "HTTP Simple Server on port 8000" Priority 3 State "Running">
 	
 Let's test it.
 	
-	CL-USER > (http-get "localhost:8000")
-	#<RESPONSE 404 "Not Found">
-
-We got a 404 back because we haven't defined any routes for the server to test against. Routes are created with the `define-http-route` macro.
-
-	CL-USER > (define-http-route index ()
-	              ()
-	            (http-ok "Hello, world!"))
-	INDEX
-
-Now let's test our new route.
-
 	CL-USER > (http-get "localhost:8000")
 	#<RESPONSE 200 "OK">
 
 	CL-USER > (response-body *)
 	"Hello, world!"
 
-The `define-http-route` macro is broken up into 3 main parts: the path-spec, route guards, and body. The path-spec is the path in the request to the server. Each element in the path-spec can be a string, a symbol, or a list. 
-
-The following are all examples of path-specs:
-
-	;; /index.html
-	("index.html")
-
-	;; /hello/:target
-	("hello" target)
-
-	;; /forum/:forum-id/thread/:thread-id
-	("forum" forum-id "thread" thread-id)
-
-	;; /static/...
-	("static" &rest path)
-
-Route guards are additional tests that are performed and must return `T` for the route body to be executed. These tests are predefined and are the keyword arguments to [`match-route`](https://github.com/massung/http/blob/master/server.lisp#L274).
-
-	;; example guards
-	(:methods '(:put :post))
-
-Let's modify the path-spec in our route to say hello to many people.
-
-	CL-USER > (define-http-route index ("hello" &rest names)
-	              (:methods '("GET"))
-	            (http-ok (format nil "Hello to ~{~:(~a~)~^, ~}" names)))
-	INDEX
-
-Let's test it by pointing your browser to [localhost:8000/hello/jeff/tom/dan](http://localhost:8000/hello/jeff/tom/dan).
+Each time a request is made, the *route* function supplied is called with the HTTP request. You are expected to create and return a `response` object, which is then sent back.
 
 ## Response Generation
 
-In the example, you probably noticed the `http-ok` function being used to generate the response. The `:http-server` package comes with a myriad of response generation function. They set the correct response code, status message, and allow for an optional body. 
+In the example, you probably noticed the `http-ok` function being used to generate the response. The `:http-server` package comes with a myriad of response generation function. They set the correct response code, status message, headers (if required by the response code), and allow for an optional body.
 
 It's probably easiest to just look at `server.lisp` to get the entire list. But all of the major response codes are there (e.g. `http-created`, `http-not-found`, `http-bad-gateway`, ...).
 

@@ -20,14 +20,7 @@
 (defpackage :http-server
   (:use :cl :lw :comm :mp :re :http)
   (:export
-   #:*request*
-   #:*route-map*
-
-   ;; server startup
    #:simple-http
-
-   ;; route declarations
-   #:define-http-route
 
    ;; response generation
    #:http-continue
@@ -76,34 +69,21 @@
 (defvar *request* nil
   "The currently active request.")
 
-(defparameter *route-map* nil
-  "All routes defined with define-http-route are added here.")
-
-(defun simple-http (&key (name "HTTP Simple Server") (port 8000))
+(defun simple-http (router &key (name "HTTP Simple Server") (port 8000))
   "Start a server process that will process incoming HTTP requests."
   (flet ((accept-request (h)
            (let ((http (make-instance 'socket-stream :socket h :direction :io :element-type 'base-char)))
              (unwind-protect
-                 (let ((resp (let ((*request* (read-http-request http)))
-                               (if *request*
-                                   (simple-request-router)
-                                 (http-bad-request)))))
+                 (let ((resp (if-let (*request* (read-http-request http))
+                                 (handler-case
+                                     (funcall router *request*)
+                                   (condition (c) (http-internal-server-error (princ-to-string c))))
+                               (http-bad-request))))
                    (send-response resp http))
                (close http)))))
     (start-up-server :function #'accept-request
                      :service port
                      :process-name (format nil "~a on port ~d" name port))))
-
-(defun simple-request-router ()
-  "Given a request, match a route and execute it."
-  (handler-case
-      (dolist (route *route-map* (http-not-found))
-        (multiple-value-bind (resp okp)
-            (funcall route)
-          (when okp
-            (return resp))))
-    (condition (e)
-      (http-internal-server-error (princ-to-string e)))))
 
 (defun read-http-request (http)
   "Read from a stream into a request."
@@ -243,85 +223,3 @@
   "The server, while acting as a gateway or proxy, did not receive a timely response from the upstream server.")
 (define-http-response http-version-not-supported 505 "HTTP Version Not Supported" ()
   "The server does not support the HTTP protocol version that was used in the request message.")
-
-(defmacro define-http-route (name (&rest path) (&rest guards &key &allow-other-keys) &body body)
-  "Defines a function that will match a request and execute body if successful."
-  (let ((route (gensym))
-        (handler (gensym))
-        (okp (gensym))
-        (els (gensym)))
-    `(let ((,route (defun ,name ()
-                     (flet ((,handler (,@(route-symbols path)) ,@body))
-                       (multiple-value-bind (,els ,okp)
-                           (match-route ',path ,@guards)
-                         (when ,okp
-                           (values (apply #',handler ,els) t)))))))
-       (prog1
-           ,route
-         (eval-when (:load-toplevel :execute)
-           (unless (member ,route *route-map* :test 'eq)
-             (push ,route *route-map*)))))))
-
-(defun route-symbols (route-els)
-  "Returns the symbol list for the route handler."
-  (flet ((el-symbol (route-el)
-           (etypecase route-el
-             (list   (list (first route-el)))
-             (symbol (list route-el))
-             (string ()))))
-    (mapcan #'el-symbol route-els)))
-
-(defun match-route (route-els &key methods)
-  "Attempts to match a request to various parameters."
-  (when (and (guard-method methods))
-    (loop :with path-els := (split-sequence "/" (url-path (request-url *request*)) :coalesce-separators t)
-          
-          ;; grab all the route elements to match
-          :for route-el :in route-els
-
-          ;; look for the rest of the arguments
-          :when (eq route-el '&rest)
-          :return (values (append match path-els) t)
-
-          ;; symbols extract a path element
-          :when (symbolp route-el)
-          :collect (let ((path-el (pop path-els)))
-                     (if path-el
-                         path-el
-                       (return-from match-route)))
-          :into match
-
-          ;; lists are path elements with guards
-          :when (listp route-el)
-          :collect (multiple-value-bind (path-el okp)
-                       (apply #'guard-path (pop path-els) (rest route-el))
-                     (if okp
-                         path-el
-                       (return-from match-route)))
-          :into match
-
-          ;; strings match exactly
-          :when (stringp route-el)
-          :do (unless (equal route-el (pop path-els))
-                (return-from match-route))
-
-          ;; make sure the path was consumed completely
-          :finally (when (null path-els)
-                     (return (values match t))))))
-
-(defun guard-method (methods)
-  "Checks to see if the method matches the request."
-  (flet ((method-equal (a b)
-           (string-equal (if (string-equal a :head) :get a)
-                         (if (string-equal b :head) :get b))))
-    (or (null methods)
-
-        ;; does the method match any accepted?
-        (find (request-method *request*) methods :test #'method-equal))))
-
-(defun guard-path (path-el &key (ok-check #'identity) (value-function #'identity))
-  "Additional guards for a particular path element."
-  (and (funcall ok-check path-el)
-
-       ;; all guards matched, return the value
-       (values (funcall value-function path-el) t)))
