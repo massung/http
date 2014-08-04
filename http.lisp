@@ -519,7 +519,7 @@
     (http-follow resp :redirect-limit redirect-limit)))
 
 (defun http-trace (url &key headers (redirect-limit 3))
-  "Perform an OPTIONS request for a URL, return the response."
+  "Perform an TRACE request for a URL, return the response."
   (let ((resp (http-simple-perform url :method "TRACE" :headers headers)))
     (http-follow resp :redirect-limit redirect-limit)))
 
