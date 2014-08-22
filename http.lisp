@@ -33,6 +33,7 @@
 
    ;; url helpers
    #:parse-url
+   #:copy-url
    #:encode-url
    #:decode-url
    #:format-url
@@ -224,21 +225,9 @@
 
 (defmacro with-url ((url url-expr &rest initargs &key scheme auth domain port path query fragment) &body body)
   "Parse a URL if necessary, bind it, and execute a body."
-  (let ((p (gensym)))
-    `(let ((,p ,url-expr))
-       (let ((,url (if (eq (type-of ,p) 'url)
-                       (if (null ',initargs)
-                           ,p
-                         (make-instance 'url
-                                        :scheme (or ,scheme (url-scheme ,p))
-                                        :auth (or ,auth (url-auth ,p))
-                                        :domain (or ,domain (url-domain ,p))
-                                        :port (or ,port (url-port ,p))
-                                        :path (or ,path (url-path ,p))
-                                        :query (or ,query (url-query ,p))
-                                        :fragment (or ,fragment (url-fragment ,p))))
-                     (parse-url ,p ,@initargs))))
-         (progn ,@body)))))
+  (declare (ignore scheme auth domain port path query fragment))
+  `(let ((,url (copy-url ,url-expr ,@initargs)))
+     (progn ,@body)))
 
 (defmacro with-response ((resp resp-expr &key timeout errorp) &body body)
   "Execute a request, if successful, execute body with the response variable."
@@ -264,6 +253,19 @@
   (declare (ignorable scheme auth domain port path query fragment))
   (let ((spec (parse #'url-parser (tokenize #'url-lexer url))))
     (apply #'make-instance 'url (nconc initargs spec))))
+
+(defun copy-url (url &rest initargs &key scheme auth domain port path query fragment)
+  "Create a new URL that's a copy, but with optionally overriding parse of it."
+  (if (typep url 'url)
+      (make-instance 'url
+                     :scheme (or scheme (url-scheme url))
+                     :auth (or auth (url-auth url))
+                     :domain (or domain (url-domain url))
+                     :port (or port (url-port url))
+                     :path (or path (url-path url))
+                     :query (or query (url-query url))
+                     :fragment (or fragment (url-fragment url)))
+    (apply #'parse-url url initargs)))
 
 (defun format-url (url &optional stream)
   "Print a URL as a complete string."
