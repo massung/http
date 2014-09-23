@@ -441,19 +441,23 @@
           
           ;; send the formal http request line
           (format http "~a ~a?~a HTTP/1.1~c~c" method path (make-query-string query) #\return #\linefeed)
+
+          ;; set all the default headers
+          (flet ((push-header (key value)
+                   (unless (find key headers :test #'string= :key #'first)
+                     (push (list key value) headers))))
+            (push-header "Host" domain)
+            (push-header "Connection" "close")
+            (push-header "User-Agent" "lispworks")
+            (push-header "Accept" "*/*")
         
-          ;; send common headers
-          (format http "Host: ~a~c~c" domain #\return #\linefeed)
-          (format http "Connection: close~c~c" #\return #\linefeed)
-          (format http "User-Agent: lispworks~c~c" #\return #\linefeed)
-          
-          ;; optionally sent
-          (when data
-            (format http "Content-Length: ~a~c~c" (length data) #\return #\linefeed))
-          (when auth
-            (format http "Authorization: ~a~c~c" (basic-auth-string auth) #\return #\linefeed))
-          
-          ;; user headers
+            ;; optionally send content and authorization
+            (when data
+              (push-header "Content-Length" (prin1-to-string (length data))))
+            (when auth
+              (push-header "Authorization" (basic-auth-string auth))))
+            
+          ;; send all the headers
           (dolist (header headers)
             (format http "~a: ~a~c~c" (first header) (second header) #\return #\linefeed))
           
