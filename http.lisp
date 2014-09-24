@@ -341,18 +341,18 @@
   "Use the charset identified in the response Content-Type to decode the response body."
   (with-headers ((content-type "Content-Type"))
       resp
-    (let ((format (or charset (with-re-match (match (find-re *charset-re* content-type) :no-match :latin-1)
-                                (cond
-                                 ((string-equal $1 "utf-8") :utf-8)
-                                 ((string-equal $1 "iso-8859-1") :latin-1)
-                                 ((string-equal $1 "shift_jis") :sjis)
-                                 ((string-equal $1 "x-mac-roman") :macos-roman)
-                                 ((string-equal $1 "euc-jp" :euc-jp))
-                                 ((string-equal $1 "jis") :jis))))))
+    (let ((format (with-re-match (match (find-re *charset-re* content-type) :no-match charset)
+                    (cond
+                     ((string-equal $1 "utf-8") :utf-8)
+                     ((string-equal $1 "iso-8859-1") :latin-1)
+                     ((string-equal $1 "shift_jis") :sjis)
+                     ((string-equal $1 "x-mac-roman") :macos-roman)
+                     ((string-equal $1 "euc-jp" :euc-jp))
+                     ((string-equal $1 "jis") :jis)))))
       (if (null format)
           (response-body resp)
         (let ((body (map '(vector (unsigned-byte 8)) #'char-code (response-body resp))))
-          (external-format:decode-external-string body format))))))
+          (values (external-format:decode-external-string body format) format))))))
 
 (defun http-header (hs header)
   "Returns the value of a request header."
