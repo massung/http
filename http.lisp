@@ -440,7 +440,8 @@
             (attach-ssl http :ssl-side :client))
           
           ;; send the formal http request line
-          (format http "~a ~a?~a HTTP/1.1~c~c" method path (make-query-string query) #\return #\linefeed)
+          (let ((qs (format nil "~:[~;?~a~]" query (make-query-string query))))
+            (format http "~a ~a~a HTTP/1.1~c~c" method path qs #\return #\linefeed))
 
           ;; set all the default headers
           (flet ((push-header (key value)
