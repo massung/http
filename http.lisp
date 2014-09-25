@@ -443,20 +443,22 @@
           (let ((qs (format nil "~:[~;?~a~]" query (make-query-string query))))
             (format http "~a ~a~a HTTP/1.1~c~c" method path qs #\return #\linefeed))
 
-          ;; set all the default headers
-          (flet ((push-header (key value)
-                   (unless (find key headers :test #'string= :key #'first)
-                     (push (list key value) headers))))
-            (push-header "Host" domain)
-            (push-header "Connection" "close")
-            (push-header "User-Agent" "lispworks")
-            (push-header "Accept" "*/*")
-        
-            ;; optionally send content and authorization
-            (when data
-              (push-header "Content-Length" (prin1-to-string (length data))))
-            (when auth
-              (push-header "Authorization" (basic-auth-string auth))))
+          ;; always send the host as it should be
+          (format http "Host: ~a~c~c" domain #\return #\linefeed)
+
+          ;; write default headers
+          (unless (assoc "Accept" headers :test #'string=)
+            (format http "Accept: */*~c~c" #\return #\linefeed))
+          (unless (assoc "Connection" headers :test #'string=)
+            (format http "Connection: close~c~c" #\return #\linefeed))
+          (unless (assoc "User-Agent" headers :test #'string=)
+            (format http "User-Agent: lispworks~c~c" #\return #\linefeed))
+          
+          ;; optionally sent
+          (when data
+            (format http "Content-Length: ~a~c~c" (length data) #\return #\linefeed))
+          (when auth
+            (format http "Authorization: ~a~c~c" (basic-auth-string auth) #\return #\linefeed))
             
           ;; send all the headers
           (dolist (header headers)
