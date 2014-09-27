@@ -493,7 +493,10 @@
         ((301 302 303 304 305 307)
          (if (zerop redirect-limit)
              resp
-           (let ((req (let ((url (parse-url (http-header resp "Location"))))
+           (let ((req (let* ((loc (http-header resp "Location"))
+                             (url (if (char= (char loc 0) #\/)
+                                      (copy-url (request-url (response-request resp)) :path loc)
+                                    (parse-url loc))))
                         (with-slots (query fragment)
                             (request-url request)
                             
