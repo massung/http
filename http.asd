@@ -10,5 +10,7 @@
   :license "Apache 2.0"
   :description "HTTP client interface for LispWorks."
   :serial t
-  :components ((:file "http") (:file "server"))
+  :components ((:file "http")
+               (:file "event-stream")
+               (:file "server"))
   :depends-on ("lexer" "base64"))

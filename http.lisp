@@ -47,16 +47,23 @@
    #:make-query-string
    #:parse-query-string
 
-   ;; decoding response bodies
+   ;; HTTP socket streams
+   #:open-http-stream
+   #:open-http-event-stream
+
+   ;; decoding content
    #:decode-response-body
 
    ;; header accessors
    #:http-headers
    #:http-header
 
+   ;; following redirects
+   #:http-follow-request
+   #:http-follow
+
    ;; request functions
    #:http-perform
-   #:http-follow
    #:http-head
    #:http-get
    #:http-options
@@ -80,8 +87,11 @@
    #:request-url
    #:request-method
    #:request-data
+   #:request-keep-alive
+   #:request-read-body
 
    ;; response accessors
+   #:response-stream
    #:response-code
    #:response-status
    #:response-body
@@ -95,30 +105,33 @@
   "Set to T if you want http-perform to signal errors.")
 
 (defclass url ()
-  ((domain   :initarg :domain   :accessor url-domain)
-   (port     :initarg :port     :accessor url-port         :initform nil)
-   (auth     :initarg :auth     :accessor url-auth         :initform nil)
-   (scheme   :initarg :scheme   :accessor url-scheme       :initform :http)
-   (path     :initarg :path     :accessor url-path         :initform "/")
-   (query    :initarg :query    :accessor url-query        :initform nil)
-   (fragment :initarg :fragment :accessor url-fragment     :initform nil))
+  ((domain     :initarg :domain     :accessor url-domain)
+   (port       :initarg :port       :accessor url-port           :initform nil)
+   (auth       :initarg :auth       :accessor url-auth           :initform nil)
+   (scheme     :initarg :scheme     :accessor url-scheme         :initform :http)
+   (path       :initarg :path       :accessor url-path           :initform "/")
+   (query      :initarg :query      :accessor url-query          :initform nil)
+   (fragment   :initarg :fragment   :accessor url-fragment       :initform nil))
   (:documentation "Universal Resource Locator."))
 
 (defclass headers ()
-  ((headers  :initarg :headers  :accessor http-headers     :initform nil))
+  ((headers    :initarg :headers    :accessor http-headers       :initform nil))
   (:documentation "Base class for requests and responses."))
 
 (defclass request (headers)
-  ((url      :initarg :url      :accessor request-url)
-   (method   :initarg :method   :accessor request-method   :initform "GET")
-   (data     :initarg :data     :accessor request-data     :initform nil))
+  ((url        :initarg :url        :accessor request-url)
+   (keep-alive :initarg :keep-alive :accessor request-keep-alive :initform nil)
+   (read-body  :initarg :read-body  :accessor request-read-body  :initform t)
+   (method     :initarg :method     :accessor request-method     :initform "GET")
+   (data       :initarg :data       :accessor request-data       :initform nil))
   (:documentation "A request for a URL from an HTTP server."))
 
 (defclass response (headers)
-  ((request  :initarg :request  :accessor response-request)
-   (code     :initarg :code     :accessor response-code)
-   (status   :initarg :status   :accessor response-status  :initform nil)
-   (body     :initarg :body     :accessor response-body    :initform nil))
+  ((request    :initarg :request    :accessor response-request)
+   (stream     :initarg :stream     :accessor response-stream)
+   (code       :initarg :code       :accessor response-code)
+   (status     :initarg :status     :accessor response-status    :initform nil)
+   (body       :initarg :body       :accessor response-body      :initform nil))
   (:documentation "The response from a request to an HTTP server."))
 
 (defmethod print-object ((url url) s)
@@ -164,10 +177,6 @@
         ;; signal an error
         (error "Unknown HTTP scheme ~s" name))))
 
-(defun http-port (url)
-  "Returns the proper port for a URL given scheme."
-  (or (url-port url) (second (assoc (url-scheme url) +http-schemes+)) 80))
-
 (deflexer url-lexer
   ("%."                       (values :dot))
   ("^([^/:]+)://"             (values :scheme (http-scheme $1)))
@@ -182,7 +191,7 @@
 (defparser url-parser
   ((start url) $1)
 
-  ;; http://login:password@www.host.com:80/index.html
+  ;; http://login:password@www.host.com:80/index.html?query=string#fragment
   ((url scheme) $1)
   ((url :error) (error "Invalid URL"))
 
@@ -222,6 +231,13 @@
   (with-slots (path)
       url
     (setf path (sanitize-path path))))
+
+(defmethod initialize-instance :after ((req request) &key)
+  "Make sure the URL - if a string - is parsed."
+  (with-slots (url)
+      req
+    (when (stringp url)
+      (setf url (parse-url url)))))
 
 (defmacro with-url ((url url-expr &rest initargs &key scheme auth domain port path query fragment) &body body)
   "Parse a URL if necessary, bind it, and execute a body."
@@ -354,6 +370,23 @@
         (let ((body (map '(vector (unsigned-byte 8)) #'char-code (response-body resp))))
           (values (external-format:decode-external-string body format) format))))))
 
+(defun open-http-stream (url &key keep-alive (errorp *http-error*) (timeout *http-timeout*))
+  "Open a TCP stream to a given URL."
+  (with-url (url url)
+    (with-slots (scheme domain port)
+        url
+      (let ((service (or port (second (assoc scheme +http-schemes+)) 80)))
+        (when-let (stream (open-tcp-stream domain
+                                           service
+                                           :keepalive keep-alive
+                                           :errorp errorp
+                                           :timeout timeout
+                                           :read-timeout timeout
+                                           :write-timeout timeout))
+          (prog1 stream
+            (when (member scheme '(:https))
+              (attach-ssl stream :ssl-side :client))))))))
+
 (defun http-header (hs header)
   "Returns the value of a request header."
   (second (assoc header (http-headers hs) :test #'string-equal)))
@@ -391,7 +424,10 @@
           :while (plusp len)
           :do (let ((chunk (make-string len)))
                 (write-sequence chunk body :end (read-sequence chunk http))
-                (read-line http)))))
+                (read-line http))
+
+          ;; chunked content will have a final, empty line
+          :finally (read-line http))))
 
 (defun read-http-content (http &optional content-length)
   "Read the rest of the response from the HTTP server."
@@ -404,152 +440,168 @@
             :while (plusp bytes-read)
             :do (write-sequence chunk body :end bytes-read)))))
 
-(defun read-http-response (http req)
+(defun read-http-response (stream req)
   "Read a response string from an HTTP socket stream and parse it."
   (multiple-value-bind (code status)
-      (read-http-status http)
-    (let* ((headers (read-http-headers http))
+      (read-http-status stream)
+    (let ((headers (read-http-headers stream)))
+      (make-instance 'response
+                     :request req
+                     :stream stream
+                     :code code
+                     :status status
+                     :headers headers
+                     :body (when (request-read-body req)
+                             (let ((encoding (second (assoc "Transfer-Encoding" headers :test #'string-equal)))
+                                   (content-length (second (assoc "Content-Length" headers :test #'string-equal))))
+                               (cond
+                                ((null encoding) (read-http-content stream content-length))
+                                ((string= encoding "identity") (read-http-content stream content-length))
+                                ((string= encoding "chunked") (read-http-content-chunked stream))
+                                (t
+                                 (error "Unknown Transfer-Encoding ~s" encoding)))))))))
 
-           ;; get the transfer encoding style and the content length
-           (encoding (second (assoc "Transfer-Encoding" headers :test #'string-equal)))
-           (content-length (second (assoc "Content-Length" headers :test #'string-equal)))
-
-           ;; read the body unless a head request
-           (body (unless (string-equal (request-method req) "HEAD")
-                   (cond
-                    ((null encoding) (read-http-content http content-length))
-                    ((string= encoding "identity") (read-http-content http content-length))
-                    ((string= encoding "chunked") (read-http-content-chunked http))
-                    (t
-                     (error "Unknown Transfer-Encoding ~s" encoding))))))
-      (make-instance 'response :request req :code code :status status :headers headers :body body))))
-
-(defun http-perform (req)
-  "Perform a generic HTTP request, return the request and body."
-  (with-slots (url method headers data)
+(defun send-http-request (stream req)
+  "Write the request to the HTTP socket."
+  (with-slots (url method headers data keep-alive)
       req
-    (with-slots (scheme domain path query auth)
-        url
-      (with-open-stream (http (open-tcp-stream domain (http-port url) :errorp *http-error* :timeout *http-timeout*))
-        (when http
-          (setf (stream:stream-read-timeout http) *http-timeout*
-                (stream:stream-write-timeout http) *http-timeout*)
-          
-          ;; perform TLS if required by the scheme
-          (when (member scheme '(:https))
-            (attach-ssl http :ssl-side :client))
-          
-          ;; send the formal http request line
-          (let ((qs (format nil "~:[~;?~a~]" query (make-query-string query))))
-            (format http "~a ~a~a HTTP/1.1~c~c" method path qs #\return #\linefeed))
 
-          ;; always send the host as it should be
-          (format http "Host: ~a~c~c" domain #\return #\linefeed)
+    ;; send the formal http request line
+    (let ((qs (format nil "~:[~;?~a~]" (url-query url) (make-query-string (url-query url)))))
+      (format stream "~a ~a~a HTTP/1.1~c~c" method (url-path url) qs #\return #\linefeed))
 
-          ;; write default headers
-          (unless (assoc "Accept" headers :test #'string=)
-            (format http "Accept: */*~c~c" #\return #\linefeed))
-          (unless (assoc "Connection" headers :test #'string=)
-            (format http "Connection: close~c~c" #\return #\linefeed))
-          (unless (assoc "User-Agent" headers :test #'string=)
-            (format http "User-Agent: lispworks~c~c" #\return #\linefeed))
+    ;; always send the host as it should be
+    (format stream "Host: ~a~c~c" (url-domain url) #\return #\linefeed)
+
+    ;; write default headers
+    (unless (assoc "Accept" headers :test #'string=)
+      (format stream "Accept: */*~c~c" #\return #\linefeed))
+    (unless (assoc "Connection" headers :test #'string=)
+      (format stream "Connection: ~:[close~;keep-alive~]~c~c" keep-alive #\return #\linefeed))
+    (unless (assoc "User-Agent" headers :test #'string=)
+      (format stream "User-Agent: lispworks~c~c" #\return #\linefeed))
           
-          ;; optionally sent
-          (when data
-            (format http "Content-Length: ~a~c~c" (length data) #\return #\linefeed))
-          (when auth
-            (format http "Authorization: ~a~c~c" (basic-auth-string auth) #\return #\linefeed))
+    ;; send the content length if there is content
+    (when data
+      (format stream "Content-Length: ~a~c~c" (length data) #\return #\linefeed))
+
+    ;; optionally send basic auth if in the url
+    (when-let (auth (url-auth url))
+      (format stream "Authorization: ~a~c~c" (basic-auth-string auth) #\return #\linefeed))
             
-          ;; send all the headers
-          (dolist (header headers)
-            (format http "~a: ~a~c~c" (first header) (second header) #\return #\linefeed))
+    ;; send all the headers
+    (dolist (header headers)
+      (format stream "~a: ~a~c~c" (first header) (second header) #\return #\linefeed))
           
-          ;; complete the request
-          (format http "~c~c" #\return #\linefeed)
+    ;; complete the request
+    (format stream "~c~c" #\return #\linefeed)
           
-          ;; write optional data to the body
-          (when data
-            (write-sequence data http))
+    ;; write optional data to the body
+    (when data
+      (write-sequence data stream))
           
-          ;; send all data
-          (force-output http)
-          
-          ;; return the response
-          (read-http-response http req))))))
+    ;; send all data
+    (force-output stream)))
 
-(defun http-simple-perform (url &rest initargs &key method headers data)
-  "Parse a URL, create a simple request, and perform the request."
-  (declare (ignorable method headers data))
-  (with-url (url url)
-    (let ((req (apply #'make-instance 'request :url url initargs)))
-      (http-perform req))))
+(defun http-perform (req &optional stream)
+  "Perform a generic HTTP request, return the response. Optionally provide a re-usable stream."
+  (unwind-protect
+      (progn
+        (unless stream
+          (setf stream (open-http-stream (request-url req) :keep-alive (request-keep-alive req))))
+
+        ;; issue the request
+        (send-http-request stream req)
+
+        ;; parse the response
+        (let ((resp (read-http-response stream req)))
+          (prog1 resp
+            (with-headers ((connection "Connection"))
+                resp
+
+              ;; check to see if the server is requesting to close the connection
+              (when (string-equal connection "close")
+                (close stream))))))
+
+    ;; if the request doesn't want to keep the socket open, ensure it closes
+    (unless (request-keep-alive req)
+      (close stream))))
+
+(defun http-follow-request (resp)
+  "Create a new request for a redirect response."
+  (when (<= 300 (response-code resp) 399)
+    (let* ((req (response-request resp))
+           (url (request-url req))
+           
+           ;; get the target location
+           (loc (http-header resp "Location"))
+           
+           ;; the redirect location might be relative (to the domain)
+           (url (if (char= (char loc 0) #\/)
+                    (copy-url url :path loc)
+                  (parse-url loc))))
+      (with-slots (query fragment)
+          url
+        
+        ;; if the new url doesn't have a query or fragment, use the old one
+        (unless (url-query url)
+          (setf (url-query url) query))
+        (unless (url-fragment url)
+          (setf (url-fragment url) fragment))
+        
+        ;; create the new request - keep the same method unless a 303
+        (make-instance 'request
+                       :url url
+                       :keep-alive (request-keep-alive req)
+                       :read-body (request-read-body req)
+                       :data (request-data req)
+                       :headers (http-headers req)
+                       :method (if (= (response-code resp) 303) "GET" (request-method req)))))))
 
 (defun http-follow (resp &key (redirect-limit 3))
-  "Follow a reponse's redirection to a new resource location."
-  (when resp
-    (with-slots (code request)
-        resp
-      (case code
-        ((301 302 303 304 305 307)
-         (if (zerop redirect-limit)
-             resp
-           (let ((req (let* ((loc (http-header resp "Location"))
-                             (url (if (char= (char loc 0) #\/)
-                                      (copy-url (request-url (response-request resp)) :path loc)
-                                    (parse-url loc))))
-                        (with-slots (query fragment)
-                            (request-url request)
-                            
-                          ;; if the new url doesn't have a query or fragment, use the old one
-                          (unless (url-query url)
-                            (setf (url-query url) query))
-                          (unless (url-fragment url)
-                            (setf (url-fragment url) fragment))
-                            
-                          ;; create the new request
-                          (make-instance 'request
-                                         :url url
-                                         :data (request-data request)
-                                         :headers (http-headers request)
-                                         :method (if (= code 303) "GET" (request-method request)))))))
-             (http-follow (http-perform req) :redirect-limit (1- redirect-limit)))))
-      (otherwise resp)))))
+  "Create a response redirect."
+  (case (response-code resp)
+    ((301 302 303 304 305 307)
+     (if (zerop redirect-limit)
+         resp
+       (let ((req (http-follow-request resp)))
+         (http-follow (http-perform req) :redirect-limit (1- redirect-limit)))))
+    (otherwise resp)))
 
-(defun http-head (url &key headers (redirect-limit 3))
+(defun http-simple-perform (url redirect-limit &rest initargs &key method headers data keep-alive (read-body t))
+  "Parse a URL, create a simple request, and perform the request."
+  (declare (ignore method headers data keep-alive read-body))
+  (let ((req (apply #'make-instance 'request :url url initargs)))
+    (http-follow (http-perform req) :redirect-limit redirect-limit)))
+
+(defun http-head (url &key headers keep-alive (redirect-limit 3))
   "Perform a HEAD request for a URL, return the response."
-  (let ((resp (http-simple-perform url :method "HEAD" :headers headers)))
-    (http-follow resp :redirect-limit redirect-limit)))
+  (http-simple-perform url redirect-limit :method "HEAD" :headers headers :read-body nil :keep-alive keep-alive))
 
-(defun http-get (url &key headers (redirect-limit 3))
+(defun http-get (url &key headers keep-alive (redirect-limit 3))
   "Perform a GET request for a URL, return the response."
-  (let ((resp (http-simple-perform url :method "GET" :headers headers)))
-    (http-follow resp :redirect-limit redirect-limit)))
+  (http-simple-perform url redirect-limit :method "GET" :headers headers :keep-alive keep-alive))
 
-(defun http-options (url &key headers (redirect-limit 3))
+(defun http-options (url &key headers keep-alive (redirect-limit 3))
   "Perform an OPTIONS request for a URL, return the response."
-  (let ((resp (http-simple-perform url :method "OPTIONS" :headers headers)))
-    (http-follow resp :redirect-limit redirect-limit)))
+  (http-simple-perform url redirect-limit :method "OPTIONS" :headers headers :keep-alive keep-alive))
 
-(defun http-trace (url &key headers (redirect-limit 3))
+(defun http-trace (url &key headers keep-alive (redirect-limit 3))
   "Perform an TRACE request for a URL, return the response."
-  (let ((resp (http-simple-perform url :method "TRACE" :headers headers)))
-    (http-follow resp :redirect-limit redirect-limit)))
+  (http-simple-perform url redirect-limit :method "TRACE" :headers headers :keep-alive keep-alive))
 
-(defun http-delete (url &key headers (redirect-limit 3))
+(defun http-delete (url &key headers keep-alive (redirect-limit 3))
   "Perform a DELETE request for a URL, return the response."
-  (let ((resp (http-simple-perform url :method "DELETE" :headers headers)))
-    (http-follow resp :redirect-limit redirect-limit)))
+  (http-simple-perform url redirect-limit :method "DELETE" :headers headers :keep-alive keep-alive))
 
-(defun http-put (url &key headers data (redirect-limit 3))
+(defun http-put (url &key headers data keep-alive (redirect-limit 3))
   "Perform a PUT request for a URL, return the response."
-  (let ((resp (http-simple-perform url :method "PUT" :headers headers :data data)))
-    (http-follow resp :redirect-limit redirect-limit)))
+  (http-simple-perform url redirect-limit :method "PUT" :headers headers :data data :keep-alive keep-alive))
 
-(defun http-post (url &key headers data (redirect-limit 3))
+(defun http-post (url &key headers data keep-alive (redirect-limit 3))
   "Perform a POST request for a URL, return the response."
-  (http-follow (http-simple-perform url :method "POST" :headers headers :data data) :redirect-limit redirect-limit))
+  (http-simple-perform url redirect-limit :method "POST" :headers headers :data data :keep-alive keep-alive))
 
-(defun http-patch (url &key headers data (redirect-limit 3))
+(defun http-patch (url &key headers data keep-alive (redirect-limit 3))
   "Perform a PATCH request for a URL, return the response."
-  (let ((resp (http-simple-perform url :method "PATCH" :headers headers :data data)))
-    (http-follow resp :redirect-limit redirect-limit)))
+  (http-simple-perform url redirect-limit :method "PATCH" :headers headers :data data :keep-alive keep-alive))
