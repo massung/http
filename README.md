@@ -1,6 +1,6 @@
 # HTTP Package for LispWorks
 
-The `http` package is a dead-simple package used for performing simple HTTP requests and parsing the responses. It also can parse URLs, escape and unescape strings, and parse query strings.
+The `http` package is a dead-simple package used for performing HTTP requests and parsing the responses. In addition, it has built-in support for keep-alive requests, and [HTTP server-sent events](http://www.w3.org/TR/2011/WD-eventsource-20111020/).
 
 In addition to being a good HTTP client, it also comes with a bare-bones HTTP server. It will handle parse incominb HTTP requests, hand them off to your handler function, and reply with the response returned by you.
 
@@ -8,41 +8,81 @@ It makes heavy use of my [`re`](http://github.com/massung/re) and [`lexer`](http
 
 ## The Client Package (`:http`)
 
-After loading the package, the first step is to parse a URL.
+It's best to understand what's going on under-the-hood first by using the low-level API. First, let's parse a URL we want to request:
 
-	CL-USER > (parse-url "www.google.com")
-	#<URL HTTP "www.google.com" "/">
+	CL-USER > (parse-url "google.com")
+	#<URL HTTP "http://google.com">
 	
-Once you have a URL, you can create a `request` object.
+Next, let's create a request for that URL:
 
 	CL-USER > (make-instance 'request :url *)
-	#<REQUEST GET HTTP "www.google.com" "/">
+	#<REQUEST GET HTTP "http://google.com">
 	
-Finally, `http-perform` will open a socket, issue the request to the server, and return a `response` object.
+Let's now perform the request and get a response.
+
+	CL-USER > (http-perform *)
+	#<RESPONSE 301 "Moved Permanently">
+	
+Hmm... looks like the resource isn't where we thought it would be. Let's generate a new request from the response.
+
+	CL-USER > (http-follow-request *)
+	#<REQUEST GET "http://www.google.com/">
+
+That looks more like it. Now let's try and get that one.
 
 	CL-USER > (http-perform *)
 	#<RESPONSE 200 "OK">
 
+Now that we've gotten a valid response, let's see what the content of the response is.
+
 	CL-USER > (response-body *)
 	"<!doctype html><html>...</html>"
 
-## Following Redirects
+The above may seem like a lot of work for a simple request. However, there are a lot of helper functions that wrap most of this up. It's important to understand at each step of the way what's being done so that you can best use the library for your needs.
 
-Following a redirect is simply a matter of fetching the "Location" header in the response, creating a new request with the new URL, and then calling `http-perform` with the new request. The `http-follow` function takes a response object (and an optional `:redirect-limit` for the number of hops to take) and does just that.
+### Constructing URLs
 
-	CL-USER > (http-get "google.com")
-	#<RESPONSE 301 "Moved Permanently">
+URLs can be constructed in one of three ways:
+
+1. By hand with `make-instance`
+2. Parsing a string with `parse-url`
+3. Copying an existing URL with `copy-url`
+
+Each URL - if constructed with `make-instance` has the following initargs: `:scheme`, `:domain`, `:port`, `:auth`, `:path`, `:query`, and `:fragment`.
+
+All of these members of a URL have valid defaults except for the domain, which must be supplied. The scheme should be either `:http` or `:https`. The auth should be a list of "username" and "password".
 	
-	CL-USER > (http-follow * :redirect-limit 1)
-	#<RESPONSE 200 "OK">
+Parsing URLs is done with `parse-url`, but in addition to parsing a string, it also allows for overriding any of the initargs that are parsed.
 
-*NOTE: If the response doesn't contain a new "Location" to follow, an error is signaled.*
+	CL-USER > (parse-url "google.com" :port 8000)
+	#<URL "http://google.com:8000/">
 
-## Parsing Headers
+Once you have a URL, you can use `copy-url` to create a new URL, and - like `parse-url` - override any of the initargs.
+
+	CL-USER > (copy-url * :query '(("foo" "bar")))
+	#<URL "http://google.com:8000/?foo=bar">
+	
+Wrapping up both `parse-url` and `copy-url` nicely is the `with-url` macro.
+
+	(with-url ((url url-form &rest initargs) &body body)
+
+The `url-form` can be either another URL object or a string.
+
+	CL-USER > (with-url (url "apple.com" :path "/trailers") url)
+	#<URL "http://apple.com/trailers">
+
+	CL-USER > (with-url (url * :scheme :https :auth '("my" "password")) url)
+	#<URL "https://my:password@apple.com/trailers">
+
+### The Anatomy of a Request
+
+### The Anatomy of a Response
+
+### HTTP Headers
 
 Both `request` and `response` objects derive from the same base class which contains headers. The `http-headers` accessor method can be used to both extract and set the headers of a request or response.
 
-	CL-USER > (http-headers (http-get "google.com"))
+	CL-USER > (http-headers (http-get "www.google.com"))
 	(("Location" "http://www.google.com/")
 	 ("Content-Type" "text/html; charset=UTF-8")
 	 ("Date" "Thu, 10 Apr 2014 18:08:21 GMT")
@@ -69,6 +109,76 @@ Finally, the `with-headers` macro is useful if you would like to bind variables 
 	            (setf dummy "My dummy value"))
 	"My dummy value"
 
+### Opening HTTP Streams
+
+If you'd like to create your own HTTP socket stream to issue (one or more) requests on, use the `open-http-stream` function, and pass a URL object to it.
+
+	(open-http-stream url &key keep-alive errorp timeout)
+
+This will automatically choose the correct port for the scheme (and URL), perform TLS (if a secure scheme), etc.
+
+This socket will remain open as long as the server doesn't close it and any requests performed on it are set to `:keep-alive t`.
+
+### Performing Requests
+
+As seen above, the method of issuing requests and parsing responses is with `http-perform`:
+
+	(http-perform req &optional stream)
+	
+If you do not provide an HTTP socket stream, then one will be created for you (and returned as part of the response). After the response is done being parsed, if the request didn't ask for the socket to remain open it will be closed for you.
+
+This is the best method of performing multiple requests to the same server without closing and re-opening sockets multiple times.
+
+	CL-USER > (setf req (make-instance 'request :url "www.google.com" :keep-alive t))
+	#<REQUEST GET "http://www.google.com/">
+	
+	CL-USER > (setf s (open-http-stream "www.google.com"))
+	#<COMM:SOCKET-STREAM 227ECE83>
+	
+	CL-USER > (loop for i below 3 collect (http-perform req s))
+	(#<RESPONSE 200 "OK">
+	 #<RESPONSE 200 "OK">
+	 #<RESPONSE 200 "OK">)
+	
+	CL-USER > (close s)
+	T
+
+*REMEMBER: You are responsible for closing your own streams!*
+
+### Following Redirects
+
+If the response you get back is telling you that the resource has been moved, the `http-follow-request` method can be used to get a new request. The new request will maintain the same method, headers, keep-alive, data, and read-body (except when the `response-code` was a 303 indicating that the new method should be "GET").
+
+	(http-follow-request resp)
+
+There is also the `http-follow` function, which will get the new request and perform it for you.
+
+	(http-follow resp &key redirect-limit)
+	
+The default *redirect-limit* is 3.
+
+### Wrapping It All Up!
+
+All of the above is nicely wrapped up for you in the following helper functions:
+
+	(http-head url &key headers keep-alive redirect-limit)
+	(http-get url &key headers keep-alive redirect-limit)
+	(http-options url &key headers keep-alive redirect-limit)
+	(http-trace url &key headers keep-alive redirect-limit)
+	(http-delete url &key headers keep-alive redirect-limit)
+	(http-put url &key headers data keep-alive redirect-limit)
+	(http-post url &key headers data keep-alive redirect-limit)
+	(http-patch url &key headers data keep-alive redirect-limit)
+
+Each will create a request to the URL provided along with the other arguments. And the `:read-body` initarg will be `T` in all cases except for `http-head`. The request will be performed and any redirects will be automatically followed for you.
+
+	CL-USER > (http-get "google.com")
+	#<RESPONSE 200 "OK">
+
+That's it!
+
+*NOTE: As with `http-follow`, the default `:redirect-limit` is set to 3.*
+
 ## Handling Encoded Content
 
 By default, the `http` package won't send an "Accept-Encoding" header with your request. Without this, a server shouldn't send an encoded body. You can, however, send the header yourself, and then decode the body after you have received a response.
@@ -88,46 +198,7 @@ Now, assuming you have a function `gzip:unzip`, you can decode the body with som
 
 *NOTE: At some point the "gzip" encoding will be added to the `http` package and this will be done for you.*
 
-## Constructing URLs
-
-While the `url` class is exported, and you are certainly free to `(make-instance 'url ...)`, the `with-url` macro can be extremely helpful.
-
-	(with-url ((url url-form &rest initargs) &body body)
-
-The `url-form` can be either another `url` object or a string to be parsed with `parse-url`. After `url-form` is evaluated, if you passed any `initargs`, they will be used to override the various initargs before being bound to the `url` variable.
-
-	CL-USER > (with-url (url "apple.com" :path "/trailers") url)
-	#<URL "http://apple.com/trailers">
-
-	CL-USER > (with-url (url * :scheme :https :auth '("my" "password")) url)
-	#<URL "https://my:password@apple.com/trailers">
-
-This is extremely handy.
-
-*NOTE: The `parse-url` function also takes these `initargs` as well, allowing you to override whatever was parsed!*
-
-## Even Quicker?
-
-While that was an overview of what's going on under-the-hood, those three steps are wrapped up nicely in the following helper functions:
-
-	(http-head url &key headers redirect-limit)
-	(http-get url &key headers redirect-limit)
-	(http-delete url &key headers redirect-limit)
-	(http-put url &key headers data redirect-limit)
-	(http-post url &key headers data redirect-limit)
-	(http-patch url &key headers data redirect-limit)
-
-Each of these functions use the `with-url` macro, allowing you to pass either a `url` object or a string.
-
-The optional `headers` should be an associative list of key/value strings that will be sent with the request. 
-
-*NOTE: `http-perform` already takes care of any obvious headers that will need to be sent: Host, Connection, Content-Length, and Authorization.*
-
-PUT, POST, and PATCH requests have an optional `data` argument, which is what is sent in the body of the request. *At this time there is no support for multi-part posts*.
-
-The `redirect-limit` defaults to 3. 
-
-## Additional Utility Functions
+### Additional Utility Functions
 
 The `http` package also comes with quite a few helper functions to assist you in generating requests and handling responses.
 
@@ -167,6 +238,20 @@ This can return up to 3 values. If the request was successful, the return value 
 	NIL
 	NIL
 	#<RESPONSE 404 "Not Found">
+
+## Using HTTP Server-Sent Event
+
+Adhearing to [http://www.w3.org/TR/2011/WD-eventsource-20111020/](http://www.w3.org/TR/2011/WD-eventsource-20111020/), you can easily open an event stream to process continuous events sent from an HTTP server.
+
+	(open-http-event-stream url event-callback &key method headers redirect-limit)
+
+The *method* defaults to "GET" and the *redirect-limit* defaults to 3.
+
+The *event-callback* should be a function that takes 3 parameters when called: the event type, an id, and a data value. The id and data are both optional and may be `NIL`.
+
+	CL-USER > (flet ((process-event (type id data)
+	                   (format t "~s ~s ~s~%" type id data)))
+	            (open-http-event-stream "url.com" #'process-events))
 
 ## The Server Package (`:http-server`)
 
