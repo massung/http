@@ -19,40 +19,44 @@
 
 (in-package :http)
 
-(defstruct http-stream-event "Stream event data."
-  id type data)
-
-(defun open-http-event-stream (url event-callback &key (method "GET") headers (redirect-limit 3))
+(defun open-http-event-stream (req event-callback &key (redirect-limit 3))
   "Create an HTTP socket to an event stream end-point and process events."
-  (push '("Accept" "text/event-stream") headers)
+  (setf (request-keep-alive req) t
+        (request-read-body req) nil
 
-  ;; create an initial request - don't read the body and keep the connection alive
-  (let ((req (make-instance 'request :url url :method method :keep-alive t :read-body nil :headers headers)))
-
-    ;; loop through redirects
-    (do ((resp (http-perform req)
-               (http-perform req)))
-        ((null resp))
-
-      ;; ensure that the socket is closed when done
-      (unwind-protect
-          (cond ((<= 200 (response-code resp) 299)
-                 (return (process-http-event-stream resp event-callback)))
-            
-                ;; if the response requires a redirect, do so
-                ((<= 300 (response-code resp) 399)
-                 (if (minusp (decf redirect-limit))
-                     (return nil)
-                   (setf req (http-follow-request resp))))
-
-                ;; anything else is an error and just return the response
-                (t (return resp)))
-        (close (response-stream resp))))))
+        ;; ensure that the accept header is accepting the proper type
+        (http-header req "Accept") "text/event-stream")
+  
+  ;; loop through redirects
+  (do ((resp (http-perform req)
+             (http-perform req)))
+      ((null resp))
+    
+    ;; ensure that the socket is closed when done
+    (unwind-protect
+        (cond ((<= 200 (response-code resp) 299)
+               (return (process-http-event-stream resp event-callback)))
+              
+              ;; if the response requires a redirect, do so
+              ((<= 300 (response-code resp) 399)
+               (if (minusp (decf redirect-limit))
+                   (return nil)
+                 (setf req (http-follow-request resp))))
+              
+              ;; anything else is an error and just return the response
+              (t (return resp)))
+      (close (response-stream resp)))))
 
 (defun process-http-event-stream (resp event-callback)
   "Keep reading event data and handing it off to various handlers."
   (let ((http (response-stream resp))
-        (event (make-http-stream-event)))
+
+        ;; create a stream for aggregating the data
+        (data (make-string-output-stream))
+
+        ;; the event type and id
+        (event nil)
+        (last-id nil))
 
     ;; loop forever, reading incoming events and dispatching them
     (do ((line (read-line http nil nil)
@@ -61,12 +65,10 @@
 
       ;; fill in the event or dispatch if an empty line
       (cond ((zerop (length line))
-             (with-slots (id type data)
-                 event
-               (funcall event-callback type id data))
+             (funcall event-callback event last-id (get-output-stream-string data))
 
-             ;; clear the event data
-             (setf event (make-http-stream-event)))
+             ;; clear the event and data
+             (setf event nil data (make-string-output-stream)))
 
             ;; ignore lines beginning with ':'
             ((char= (char line 0) #\:))
@@ -79,9 +81,11 @@
                      (values line ""))
 
                  ;; HTTP event streams only support a few keys
-                 (cond ((string= key "id")    (setf (http-stream-event-id event) value))
-                       ((string= key "event") (setf (http-stream-event-type event) value))
-                       ((string= key "data")  (setf (http-stream-event-data event) value))
+                 (cond ((string= key "id")    (setf last-id value))
+                       ((string= key "event") (setf event value))
+
+                       ;; the data field collects values appended by newlines
+                       ((string= key "data")  (format data "~a~%" value))
 
                        ;; set the stream reconnect time
                        ((string= key "retry") (multiple-value-bind (n pos)

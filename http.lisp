@@ -370,22 +370,21 @@
         (let ((body (map '(vector (unsigned-byte 8)) #'char-code (response-body resp))))
           (values (external-format:decode-external-string body format) format))))))
 
-(defun open-http-stream (url &key keep-alive (errorp *http-error*) (timeout *http-timeout*))
+(defun open-http-stream (req &key (errorp *http-error*) (timeout *http-timeout*))
   "Open a TCP stream to a given URL."
-  (with-url (url url)
-    (with-slots (scheme domain port)
-        url
-      (let ((service (or port (second (assoc scheme +http-schemes+)) 80)))
-        (when-let (stream (open-tcp-stream domain
-                                           service
-                                           :keepalive keep-alive
-                                           :errorp errorp
-                                           :timeout timeout
-                                           :read-timeout timeout
-                                           :write-timeout timeout))
-          (prog1 stream
-            (when (member scheme '(:https))
-              (attach-ssl stream :ssl-side :client))))))))
+  (with-slots (scheme domain port)
+      (request-url req)
+    (let ((service (or port (second (assoc scheme +http-schemes+)) 80)))
+      (when-let (stream (open-tcp-stream domain
+                                         service
+                                         :errorp errorp
+                                         :timeout timeout
+                                         :read-timeout timeout
+                                         :write-timeout timeout
+                                         :keepalive (request-keep-alive req)))
+        (prog1 stream
+          (when (member scheme '(:https))
+            (attach-ssl stream :ssl-side :client)))))))
 
 (defun http-header (hs header)
   "Returns the value of a request header."
@@ -508,7 +507,7 @@
   (unwind-protect
       (progn
         (unless stream
-          (setf stream (open-http-stream (request-url req) :keep-alive (request-keep-alive req))))
+          (setf stream (open-http-stream req)))
 
         ;; issue the request
         (send-http-request stream req)
