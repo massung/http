@@ -65,7 +65,8 @@
 
       ;; fill in the event or dispatch if an empty line
       (cond ((zerop (length line))
-             (funcall event-callback event last-id (get-output-stream-string data))
+             (when event
+               (funcall event-callback event last-id (get-output-stream-string data)))
 
              ;; clear the event and data
              (setf event nil data (make-string-output-stream)))
