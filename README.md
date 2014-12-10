@@ -257,9 +257,11 @@ The *event-callback* should be a function that takes 3 parameters when called: t
 
 If you would like to host a simple HTTP server, this package handles accepting the incoming connections, parsing the requests, and sending your responses back.
 
-The simplest server you can create would be...
+	(simple-http router server-config &key name port)
 
-	CL-USER > (simple-http #'(lambda (req) (http-ok "Hello, world!")))
+The simplest, "Hello, world" server example would be:
+
+	CL-USER > (simple-http #'(lambda (req server-config) (http-ok server-config)) "Hello, world!")
 	#<MP:PROCESS Name "HTTP Simple Server on port 8000" Priority 3 State "Running">
 	
 Let's test it.
@@ -270,7 +272,7 @@ Let's test it.
 	CL-USER > (response-body *)
 	"Hello, world!"
 
-Each time a request is made, the *route* function supplied is called with the HTTP request. You are expected to create and return a `response` object, which is then sent back.
+Each time a request is made, the *route* function supplied is called with the HTTP request and the *server-config*. You are expected to create and return a `response` object, which is then sent back.
 
 ## Response Generation
 

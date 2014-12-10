@@ -69,14 +69,14 @@
 (defvar *request* nil
   "The currently active request.")
 
-(defun simple-http (router &key (name "HTTP Simple Server") (port 8000))
+(defun simple-http (router server-config &key (name "HTTP Simple Server") (port 8000))
   "Start a server process that will process incoming HTTP requests."
   (flet ((accept-request (h)
            (let ((http (make-instance 'socket-stream :socket h :direction :io :element-type 'base-char)))
              (unwind-protect
                  (let ((resp (if-let (*request* (read-http-request http))
                                  (handler-case
-                                     (funcall router *request*)
+                                     (funcall router *request* server-config)
                                    (condition (c) (http-internal-server-error (princ-to-string c))))
                                (http-bad-request))))
                    (send-response resp http))
