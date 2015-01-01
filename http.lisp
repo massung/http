@@ -103,6 +103,8 @@
   "Used as the :timeout and :read-timeout to the HTTP stream object.")
 (defparameter *http-error* nil
   "Set to T if you want http-perform to signal errors.")
+(defparameter *http-semaphore* (mp:make-semaphore :name "HTTP Lock" :count 200)
+  "Prevents many HTTP client connections simultaneously.")
 
 (defclass url ()
   ((domain     :initarg :domain     :accessor url-domain)
@@ -506,6 +508,9 @@
   "Perform a generic HTTP request, return the response. Optionally provide a re-usable stream."
   (unwind-protect
       (progn
+        (mp:semaphore-acquire *http-semaphore*)
+
+        ;; if a stream wasn't provided create one
         (unless stream
           (setf stream (open-http-stream req)))
 
@@ -522,9 +527,13 @@
               (when (string-equal connection "close")
                 (close stream))))))
 
-    ;; if the request doesn't want to keep the socket open, ensure it closes
-    (unless (request-keep-alive req)
-      (close stream))))
+    ;; release the lock
+    (progn
+      (mp:semaphore-release *http-semaphore*) 
+
+      ;; if the request doesn't want to keep the socket open, ensure it closes
+      (unless (request-keep-alive req)
+        (close stream)))))
 
 (defun http-follow-request (resp)
   "Create a new request for a redirect response."
