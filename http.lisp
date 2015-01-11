@@ -261,9 +261,9 @@
 (defmacro with-headers ((&rest bindings) object &body body)
   "Extract a value from an HTTP header assoc list."
   `(symbol-macrolet (,@(loop :for binding :in bindings
-                             :collect (destructuring-bind (var key)
+                             :collect (destructuring-bind (var key &key all)
                                           binding
-                                        `(,var (http-header ,object ,key)))))
+                                        `(,var (http-header ,object ,key :all ,all)))))
      (progn ,@body)))
 
 (defun parse-url (url &rest initargs &key scheme auth domain port path query fragment)
@@ -388,9 +388,11 @@
           (when (member scheme '(:https))
             (attach-ssl stream :ssl-side :client)))))))
 
-(defun http-header (hs header)
+(defun http-header (hs header &key all)
   "Returns the value of a request header."
-  (second (assoc header (http-headers hs) :test #'string-equal)))
+  (if all
+      (mapcar #'second (remove header (http-headers hs) :test-not #'string-equal :key #'first))
+    (second (assoc header (http-headers hs) :test #'string-equal))))
 
 (defsetf http-header (headers header) (value)
   "Add or change the value of a request header."
