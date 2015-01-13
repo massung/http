@@ -548,7 +548,9 @@
            
            ;; the redirect location might be relative (to the domain)
            (url (if (char= (char loc 0) #\/)
-                    (copy-url url :path loc)
+                    (with-slots (scheme domain port auth)
+                        url
+                      (parse-url (format nil +url-format+ scheme auth domain (null port) port loc nil nil)))
                   (parse-url loc))))
       (with-slots (query fragment)
           url
