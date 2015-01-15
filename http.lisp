@@ -161,10 +161,8 @@
 (defparameter *charset-re* (compile-re "charset%s*=%s*([%w%-]+)")
   "Pattern for parsing the character encoding type.")
 
-(defconstant +reserved-chars+ '(#\% #\$ #\& #\+ #\, #\/ #\: #\; #\= #\? #\@)
-  "Reserved URL characters that *must* be encoded.")
-(defconstant +unwise-chars+ '(#\# #\{ #\} #\| #\\ #\^ #\[ #\] #\`)
-  "Characters presenting a possibility of being misunderstood and should be encoded.")
+(defconstant +unreserved-chars+ "abcdefghijklmnopqrstuvwxyz0123456789-._~"
+  "Unreserved URL characters that *must not* be encoded.")
 (defconstant +http-schemes+ '((:http 80) (:https 443) (nil 80))
   "A list of valid HTTP schemes and their default ports.")
 (defconstant +url-format+ "~@[~(~a~):~]//~@[~{~a:~a~}@~]~a~:[:~a~;~*~]~a~@[?~a~]~@[#~a~]"
@@ -294,61 +292,56 @@
 
 (defun escape-char-p (c)
   "T if a character needs to be escaped in a URL."
-  (or (char< c #\!)
-      (char> c #\~)
-
-      ;; reserved and unsafe characters
-      (find c +unwise-chars+ :test #'char=)
-      (find c +reserved-chars+ :test #'char=)))
+  (not (find c +unreserved-chars+ :test #'char-equal)))
 
 (defun sanitize-path (path)
   "Make sure whitespaces in a path are actually %20."
   (with-output-to-string (s)
-    (loop :for c :across path
-          :do (if (char= c #\space)
+    (loop for c across path
+          do (if (char= c #\space)
                   (princ "%20" s)
                 (princ c s)))))
 
 (defun encode-url (string)
   "Convert a string into a URL-safe, encoded string."
   (with-output-to-string (url)
-    (loop :for c :across string
-          :do (if (escape-char-p c)
-                  (format url "%~16,2,'0r" (char-code c))
-                (princ c url)))))
+    (loop for c across string
+          do (if (escape-char-p c)
+                 (format url "%~16,2,'0r" (char-code c))
+               (princ c url)))))
 
 (defun decode-url (url)
   "Decode an encoded URL into a string. Returns NIL if malformed."
   (with-output-to-string (string)
     (with-input-from-string (s url)
-      (loop :for c := (read-char s nil nil)
-            :while c
-            :do (case c
-                  (#\+ (princ #\space string))
-                  (#\% (let ((c1 (read-char s nil nil))
-                             (c2 (read-char s nil nil)))
-                         (when (and c1 c2)
-                           (let ((code (logior (ash (parse-integer (string c1) :radix 16) 4)
-                                               (ash (parse-integer (string c2) :radix 16) 0))))
-                             (princ (code-char code) string)))))
-                  (otherwise
-                   (princ c string)))))))
+      (loop for c := (read-char s nil nil)
+            while c
+            do (case c
+                 (#\+ (princ #\space string))
+                 (#\% (let ((c1 (read-char s nil nil))
+                            (c2 (read-char s nil nil)))
+                        (when (and c1 c2)
+                          (let ((code (logior (ash (parse-integer (string c1) :radix 16) 4)
+                                              (ash (parse-integer (string c2) :radix 16) 0))))
+                            (princ (code-char code) string)))))
+                 (otherwise
+                  (princ c string)))))))
 
 (defun make-query-string (query)
   "Build a k=v&.. query string from an associative list, properly url-encoded."
   (with-output-to-string (qs)
-    (loop :for (key value) :in query
-          :when value
-          :do (let ((encoded-value (encode-url (princ-to-string value))))
-                (format qs "~:[~;&~]~a=~a" (plusp (file-position qs)) key encoded-value)))))
+    (loop for (key value) :in query
+          when value
+          do (let ((encoded-value (encode-url (princ-to-string value))))
+               (format qs "~:[~;&~]~a=~a" (plusp (file-position qs)) key encoded-value)))))
 
 (defun parse-query-string (qs)
   "Return an associative list of query string parameters."
   (let ((q (split-sequence "&=" qs)))
-    (loop :for k := (pop q)
-          :for v := (pop q)
-          :while k
-          :collect (list k (if v (decode-url v) "")))))
+    (loop for k := (pop q)
+          for v := (pop q)
+          while k
+          collect (list k (if v (decode-url v) "")))))
 
 (defun basic-auth-string (login)
   "Create the basic auth value for the Authorization header."
@@ -423,14 +416,14 @@
 (defun read-http-content-chunked (http)
   "Read the body from the HTTP server using a chunked Transfer-Encoding."
   (with-output-to-string (body)
-    (loop :for len := (parse-integer (read-line http) :radix 16 :junk-allowed t)
-          :while (plusp len)
-          :do (let ((chunk (make-string len)))
-                (write-sequence chunk body :end (read-sequence chunk http))
-                (read-line http))
+    (loop for len = (parse-integer (read-line http) :radix 16 :junk-allowed t)
+          while (plusp len)
+          do (let ((chunk (make-string len)))
+               (write-sequence chunk body :end (read-sequence chunk http))
+               (read-line http))
 
           ;; chunked content will have a final, empty line
-          :finally (read-line http))))
+          finally (read-line http))))
 
 (defun read-http-content (http &optional content-length)
   "Read the rest of the response from the HTTP server."
@@ -438,10 +431,10 @@
       (let ((body (make-string (parse-integer content-length))))
         (prog1 body (read-sequence body http)))
     (with-output-to-string (body)
-      (loop :with chunk := (make-string 4000)
-            :for bytes-read := (read-sequence chunk http)
-            :while (plusp bytes-read)
-            :do (write-sequence chunk body :end bytes-read)))))
+      (loop with chunk = (make-string 4000)
+            for bytes-read = (read-sequence chunk http)
+            while (plusp bytes-read)
+            do (write-sequence chunk body :end bytes-read)))))
 
 (defun read-http-response (stream req)
   "Read a response string from an HTTP socket stream and parse it."
