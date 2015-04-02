@@ -314,7 +314,7 @@
   "Decode an encoded URL into a string. Returns NIL if malformed."
   (with-output-to-string (string)
     (with-input-from-string (s url)
-      (loop for c := (read-char s nil nil)
+      (loop for c = (read-char s nil nil)
             while c
             do (case c
                  (#\+ (princ #\space string))
@@ -338,8 +338,8 @@
 (defun parse-query-string (qs)
   "Return an associative list of query string parameters."
   (let ((q (split-sequence "&=" qs)))
-    (loop for k := (pop q)
-          for v := (pop q)
+    (loop for k = (pop q)
+          for v = (pop q)
           while k
           collect (list k (if v (decode-url v) "")))))
 
@@ -411,7 +411,7 @@
   (flet ((read-header ()
            (with-re-match (match (match-re *header-re* (read-line http)))
              (list $1 $2))))
-    (loop :for header := (read-header) :while header :collect header)))
+    (loop for header = (read-header) while header collect header)))
 
 (defun read-http-content-chunked (http)
   "Read the body from the HTTP server using a chunked Transfer-Encoding."
