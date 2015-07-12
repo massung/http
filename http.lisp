@@ -177,7 +177,7 @@
         ;; signal an error
         (error "Unknown HTTP scheme ~s" name))))
 
-(deflexer url-lexer
+(deflexer url-lexer (s)
   ("%."                       (values :dot))
   ("^([^/:]+)://"             (values :scheme (http-scheme $1)))
   ("^//"                      (values :scheme nil))
@@ -267,7 +267,7 @@
 (defun parse-url (url &rest initargs &key scheme auth domain port path query fragment)
   "Parse a URL and return. If URL is relative, set what it's relative to."
   (declare (ignorable scheme auth domain port path query fragment))
-  (let ((spec (parse #'url-parser (tokenize #'url-lexer url))))
+  (let ((spec (parse #'url-parser #'url-lexer url)))
     (apply #'make-instance 'url (nconc initargs spec))))
 
 (defun copy-url (url &rest initargs &key scheme auth domain port path query fragment)
