@@ -8,9 +8,13 @@
   :version "1.0"
   :author "Jeffrey Massung"
   :license "Apache 2.0"
-  :description "HTTP client interface for LispWorks."
+  :description "HTTP interface for ClozureCL."
   :serial t
   :components ((:file "http")
-               (:file "event-stream")
-               (:file "server"))
-  :depends-on ("lexer" "base64"))
+               (:file "headers")
+               (:file "content-type")
+               (:file "request")
+               (:file "response")
+               (:file "server")
+               (:file "router"))
+  :depends-on ("base64" "parse" "re" "url"))
