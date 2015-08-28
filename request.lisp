@@ -79,10 +79,16 @@
     ;; send the formal http request line
     (let* ((path (url-path url))
            (query (url-query url))
-           (qs (make-query-string query)))
+           (fragment (url-fragment url)))
 
       ;; write the HTTP request method
-      (format stream "~a ~a~:[~;?~a~]~a HTTP/1.1" method path query qs)
+      (format stream "~a ~a~@[?~a~]~@[#~a~] HTTP/1.1"
+              method
+              path
+              query
+              fragment)
+
+      ;; ready for the headers
       (write-char #\return stream)
       (write-char #\linefeed stream))
 
