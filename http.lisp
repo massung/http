@@ -34,7 +34,7 @@
    #:open-http-event-stream
 
    ;; content type class and functions
-   #:content-type
+   #:content-type-parse
    #:content-mime-type
    #:content-parameters
 
@@ -73,4 +73,3 @@
    #:resp-request))
 
 (in-package :http)
-

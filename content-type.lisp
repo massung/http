@@ -45,7 +45,7 @@
 
 ;;; ----------------------------------------------------
 
-(defun parse-content-type (s)
+(defun content-type-parse (s)
   "Parse a string and return the content type."
   (with-re-match (m (match-re *mime-re* s))
     (let ((params (let ((i (match-pos-end m)))
@@ -96,7 +96,7 @@
   (with-headers ((content-type "Content-Type"))
       hs
     (if content-type
-        (parse-content-type content-type)
+        (content-type-parse content-type)
       (make-instance 'content-type :mime-type '("text" "plain")))))
 
 ;;; ----------------------------------------------------
@@ -142,4 +142,3 @@
 
             ;; unknown, default to utf-8
             (t :utf-8)))))
-
