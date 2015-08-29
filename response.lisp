@@ -76,26 +76,28 @@
   "Read the body from the HTTP server using a chunked Transfer-Encoding."
   (loop
 
-    ;; read the next chunk size (or use the one provided)
-    for n = (if chunk-size
-                chunk-size
-              (parse-integer (read-line http) :radix 16 :junk-allowed t))
+     ;; read the next chunk size (or use the one provided)
+     for n = (if chunk-size
+                 chunk-size
+               (parse-integer (read-line http) :radix 16 :junk-allowed t))
 
-    ;; create a chunk large enough for the read
-    for chunk = (make-array n :element-type '(unsigned-byte 8) :fill-pointer t)
-    for bytes-read = (read-sequence chunk http)
+     ;; if we failed to parse a chunk size, we're done
+     while n
 
-    ;; update the fill pointer
-    do (setf (fill-pointer chunk) bytes-read)
+     ;; create a chunk for reading from the stream
+     for chunk = (make-array n :element-type 'octet)
 
-    ;; stop once nothing else was read
-    while (plusp bytes-read)
+     ;; expand the chunk if needed, and read the sequence
+     for bytes-read = (read-sequence chunk http)
 
-    ;; collect all the chunks together for concatenation later
-    collect chunk into body
+     ;; stop once nothing else was read
+     while (plusp bytes-read)
 
-    ;; return all the bytes as a single vector
-    finally (return (apply #'concatenate '(vector (unsigned-byte 8)) body))))
+     ;; collect all the chunks together for concatenation later
+     collect chunk into body
+
+     ;; return all the bytes as a single vector
+     finally (return (apply #'concatenate 'octet-vector body))))
 
 ;;; ----------------------------------------------------
 
@@ -103,7 +105,7 @@
   "Read the rest of the response from the HTTP server."
   (if content-length
       (let* ((n (parse-integer content-length))
-             (body (make-array n :element-type '(unsigned-byte 8))))
+             (body (make-array n :element-type 'octet)))
         (prog1 body
           (read-sequence body http)))
 
@@ -156,4 +158,3 @@
       (unless (binary-content-type-p type)
         (let ((f (content-type-external-format type)))
           (setf body (decode-string-from-octets body :external-format f)))))))
-

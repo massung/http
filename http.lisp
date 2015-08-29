@@ -73,3 +73,8 @@
    #:resp-request))
 
 (in-package :http)
+
+;;; ----------------------------------------------------
+
+(deftype octet () '(unsigned-byte 8))
+(deftype octet-vector () '(vector octet))
