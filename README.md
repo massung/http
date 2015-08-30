@@ -173,89 +173,86 @@ Now, assuming you have a function `gzip:unzip`, you can decode the body with som
 
 *NOTE: At some point the "gzip" encoding will be added to the `http` package and this will be done for you.*
 
-### Additional Utility Functions
-
-The `http` package also comes with quite a few helper functions to assist you in generating requests and handling responses.
-
-The `encode-url` function takes a string and makes sure that all characters are properly encoded for the query string of a URL.
-
-  CL-USER > (encode-url "$9.50+/-5 cents")
-  "%249.50%2B%2F-5%20cents"
-
-The inverse is `decode-url`, which given an encoded string will decode it into the original value.
-
-  CL-USER > (decode-url *)
-  "$9.50+/-5 cents"
-
-The `make-query-string` function takes an list of key/value pairs and generates a url-encoded query string. This function is used internally for all URL query strings, but you can use it for PUT and POST request bodies.
-
-  CL-USER > (make-query-string '(("q" "henry gale") ("limit" 10)))
-  "q=henry+gale&limit=10"
-
-The inverse of `make-query-string` is `parse-query-string`. Given a query string, it will parse it into a list of key/value pairs.
-
-  CL-USER > (parse-query-string *)
-  (("q" "henry gale") ("limit" "10"))
-
-*NOTE: While `make-query-string` takes any value and converts it to a string, `parse-query-string` will only return strings for values as it is unaware of the type. It's up to you to parse the value appropriately.*
+### Helpful Macros
 
 The `with-response` macro can be used when you only care about successful requests (i.e. `(<= 200 response-code 299)` is `T`).
 
-  CL-USER > (with-response (resp (http-get "www.apple.com"))
-              (response-code resp))
-  200
-  T
+    CL-USER > (with-response (resp (http-get "www.apple.com"))
+                (response-code resp))
+    200
+    T
 
 This can return up to 3 values. If the request was successful, the return value will be the result of the body and `T` to indicate that the request was successful. If the request failed, the return values will be `NIL` (no result), `NIL` (failure), and the response.
 
-  CL-USER > (with-response (resp (http-get "www.apple.com/foo"))
-              (response-code resp))
-  NIL
-  NIL
-  #<RESPONSE 404 "Not Found">
+    CL-USER > (with-response (resp (http-get "www.apple.com/foo"))
+                (response-code resp))
+    NIL
+    NIL
+    #<RESPONSE 404 "Not Found">
 
-## Using HTTP Server-Sent Event
+## HTTP Server-Sent Events
 
 Adhearing to [http://www.w3.org/TR/2011/WD-eventsource-20111020/](http://www.w3.org/TR/2011/WD-eventsource-20111020/), you can easily open an event stream to process continuous events sent from an HTTP server.
 
-  (open-http-event-stream url event-callback &key method headers redirect-limit)
-
-The *method* defaults to "GET" and the *redirect-limit* defaults to 3.
+    (open-http-event-stream url event-callback &key method headers redirect-limit)
 
 The *event-callback* should be a function that takes 3 parameters when called: the event type, an id, and a data value. The id and data are both optional and may be `NIL`.
 
-  CL-USER > (flet ((process-event (type id data)
-                     (format t "~s ~s ~s~%" type id data)))
-              (open-http-event-stream "url.com" #'process-events))
+    CL-USER > (flet ((process-event (type id data)
+                       (format t "New event: ~s ~s ~s~%" type id data)))
+                (open-http-event-stream "url.com" #'process-events))
 
 ## The Server Package (`:http-server`)
 
 If you would like to host a simple HTTP server, this package handles accepting the incoming connections, parsing the requests, and sending your responses back.
 
-  (simple-http router server-config &key name port)
+    (http-simple-server router server-config &key name port)
 
 The simplest, "Hello, world" server example would be:
 
-  CL-USER > (simple-http #'(lambda (req server-config) (http-ok server-config)) "Hello, world!")
-  #<MP:PROCESS Name "HTTP Simple Server on port 8000" Priority 3 State "Running">
+    CL-USER > (http-simple-server #'(lambda (req resp) (http-ok resp "Hello, world!")))
+    #<PROCESS HTTP Server>
 
 Let's test it.
 
-  CL-USER > (http-get "localhost:8000")
-  #<RESPONSE 200 "OK">
+    CL-USER > (http-get "localhost:8000")
+    #<RESPONSE 200 "OK">
 
-  CL-USER > (response-body *)
-  "Hello, world!"
+    CL-USER > (resp-body *)
+    "Hello, world!"
 
-Each time a request is made, the *route* function supplied is called with the HTTP request and the *server-config*. You are expected to create and return a `response` object, which is then sent back.
+Each time a request is made, the *route* function supplied is called with the HTTP request made and the response that will be returned back. You are expected to fill out the response appropriately.
 
-## Response Generation
+### Responses
 
 In the example, you probably noticed the `http-ok` function being used to generate the response. The `:http-server` package comes with a myriad of response generation function. They set the correct response code, status message, headers (if required by the response code), and allow for an optional body.
 
 It's probably easiest to just look at `server.lisp` to get the entire list. But all of the major response codes are there (e.g. `http-created`, `http-not-found`, `http-bad-gateway`, ...).
 
-While for simple cases you'll just be creating and returning the response at the same time, you can also create a response, modify it (e.g. set headers), and then return it.
+### Router Functions
+
+The server package comes with a macro for defining router functions.
+
+    (define-http-router router &body routes)
+
+This will create a function (*router*) that will attempt to match the path of the request with all the *routes* defined. If no route matches, then the an automatic `http-not-found` response is sent for you.
+
+Each route should be declared as:
+
+    (method path route-handler-function)
+
+Here is an example router:
+
+    CL-USER > (define-http-router my-router
+                (:get  "/"         'homepage)
+                (:get  "/user/:id" 'user-page)
+                (:post "/login"    'login-page))
+
+Most important in this example is the *user-page* route: it shows the use of a keyword argument to the *route-handler*, which should now be defined as:
+
+    (defun user-page (req resp &key id) ...)
+
+If a user were to request the page `my-site.com/user/10383`, when *user-page* is called, *id* will be bound to "10383".
 
 ## Generating HTML
 

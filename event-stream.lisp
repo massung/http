@@ -1,6 +1,6 @@
-;;;; Simple HTTP/HTML Package for LispWorks
+;;;; HTTP Interface for ClozureCL
 ;;;;
-;;;; Copyright (c) 2013 by Jeffrey Massung
+;;;; Copyright (c) Jeffrey Massung
 ;;;;
 ;;;; This file is provided to you under the Apache License,
 ;;;; Version 2.0 (the "License"); you may not use this file
@@ -21,35 +21,35 @@
 
 (defun open-http-event-stream (req event-callback &key (redirect-limit 3))
   "Create an HTTP socket to an event stream end-point and process events."
-  (setf (request-keep-alive req) t
-        (request-read-body req) nil
+  (setf (req-keep-alive req) t
+        (req-read-body req) nil
 
         ;; ensure that the accept header is accepting the proper type
         (http-header req "Accept") "text/event-stream")
-  
+
   ;; loop through redirects
   (do ((resp (http-perform req)
              (http-perform req)))
       ((null resp))
-    
+
     ;; ensure that the socket is closed when done
     (unwind-protect
-        (cond ((<= 200 (response-code resp) 299)
+        (cond ((<= 200 (resp-code resp) 299)
                (return (process-http-event-stream resp event-callback)))
-              
+
               ;; if the response requires a redirect, do so
-              ((<= 300 (response-code resp) 399)
+              ((<= 300 (resp-code resp) 399)
                (if (minusp (decf redirect-limit))
                    (return nil)
                  (setf req (http-follow-request resp))))
-              
+
               ;; anything else is an error and just return the response
               (t (return resp)))
-      (close (response-stream resp)))))
+      (close (resp-stream resp)))))
 
 (defun process-http-event-stream (resp event-callback)
   "Keep reading event data and handing it off to various handlers."
-  (let ((http (response-stream resp))
+  (let ((http (resp-stream resp))
 
         ;; create a stream for aggregating the data
         (data (make-string-output-stream))
@@ -66,7 +66,10 @@
       ;; fill in the event or dispatch if an empty line
       (cond ((zerop (length line))
              (when event
-               (funcall event-callback event last-id (get-output-stream-string data)))
+               (funcall event-callback
+                        event
+                        last-id
+                        (get-output-stream-string data)))
 
              ;; clear the event and data
              (setf event nil data (make-string-output-stream)))
@@ -76,10 +79,11 @@
 
             ;; set the type and value of the field
             (t (multiple-value-bind (key value)
-                   (if-let (pivot (position #\: line :test #'char=))
-                       (values (string-trim " " (subseq line 0 pivot))
-                               (string-trim " " (subseq line (1+ pivot))))
-                     (values line ""))
+                   (let ((pivot (position #\: line)))
+                     (if pivot
+                         (values (string-trim " " (subseq line 0 pivot))
+                                 (string-trim " " (subseq line (1+ pivot))))
+                       (values line "")))
 
                  ;; HTTP event streams only support a few keys
                  (cond ((string= key "id")    (setf last-id value))
@@ -89,9 +93,9 @@
                        ((string= key "data")  (format data "~a~%" value))
 
                        ;; set the stream reconnect time
-                       ((string= key "retry") (multiple-value-bind (n pos)
-                                                  (parse-integer value :junk-allowed t)
-                                                (when (= (length value) pos)
-                                                  (setf (stream:stream-read-timeout http) n
-                                                        (stream:stream-write-timeout http) n)))))))))))
-
+                       ((string= key "retry")
+                        (multiple-value-bind (n pos)
+                            (parse-integer value :junk-allowed t)
+                          (when (= (length value) pos)
+                            (setf (stream-input-timeout http) n
+                                  (stream-output-timeout http) n)))))))))))

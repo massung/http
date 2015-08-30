@@ -15,6 +15,7 @@
                (:file "content-type")
                (:file "request")
                (:file "response")
+               (:file "event-stream")
                (:file "server")
                (:file "router"))
   :depends-on ("base64" "parse" "re" "url"))

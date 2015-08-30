@@ -150,17 +150,17 @@
         (format http "HTTP/1.1 ~d~@[ ~a~]" code status)
 
         ;; begin headers
-        (http::send-http-header http)
+        (http::write-http-header http)
 
         ;; send any and all headers back
         (dolist (header headers)
-          (http::send-http-header http (first header) (second header)))
+          (http::write-http-header http (first header) (second header)))
 
         ;; close the connection when done
-        (http::send-http-header http "Connection" "close")
+        (http::write-http-header http "Connection" "close")
 
         ;; end of headers
-        (http::send-http-header http)
+        (http::write-http-header http)
 
         ;; send the body if present and not a HEAD request
         (when (and body req (string/= (req-method req) "HEAD"))
