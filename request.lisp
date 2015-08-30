@@ -36,7 +36,7 @@
   (print-unreadable-object (req s :type t)
     (with-slots (method url)
         req
-      (format s "~a ~s" method (url-format url)))))
+      (format s "~a ~s" method (princ-to-string url)))))
 
 ;;; ----------------------------------------------------
 
