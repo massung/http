@@ -82,11 +82,10 @@
            (fragment (url-fragment url)))
 
       ;; write the HTTP request method
-      (format stream "~a ~a~:[~1*~;?~a~]~@[#~a~] HTTP/1.1"
+      (format stream "~a ~a~:{~a=~/url:url-format/~:^&~}~@[#~a~] HTTP/1.1"
               method
               path
               query
-              (make-query-string query)
               fragment)
 
       ;; ready for the headers
