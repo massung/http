@@ -82,7 +82,8 @@
            (fragment (url-fragment url)))
 
       ;; write the HTTP request method
-      (format stream "~a ~a~:{~a=~/url:url-format/~:^&~}~@[#~a~] HTTP/1.1"
+      (format stream
+              "~a ~a~@[?~:{~a=~/url:url-format/~:^&~}~]~@[#~a~] HTTP/1.1"
               method
               path
               query
