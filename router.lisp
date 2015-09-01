@@ -28,23 +28,23 @@
 
 (defmacro define-http-router (router &body routes)
   "Define a simple router function."
-  (let ((req (gensym "req"))
-        (resp (gensym "resp")))
+  (let ((resp (gensym "resp")))
     (labels ((try-routes (r rs)
                (if (null r)
                    `(http-not-found ,resp)
-                 `(if ,(apply #'make-route req resp r)
+                 `(if ,(apply #'make-route resp r)
                       t
                     ,(try-routes (first rs) (rest rs))))))
-      `(defun ,router (,req ,resp)
+      `(defun ,router (,resp)
          ,(try-routes (first routes) (rest routes))))))
 
 ;;; ----------------------------------------------------
 
-(defun make-route (req resp method path-spec handler)
+(defun make-route (resp method path-spec handler)
   "Create a path router that will call a handler function on match."
   (let ((okp (gensym "okp"))
         (args (gensym "args"))
+        (req (gensym "req"))
 
         ;; the parameter list for the path-spec
         (plist (loop
@@ -65,11 +65,12 @@
                                 (t path)))))
 
     ;; match the method and path-spec, call the handler function
-    `(when (string-equal (req-method ,req) ,method)
-       (multiple-value-bind (,args ,okp)
-           (path-equal ',plist (url-path (req-url ,req)))
-         (when ,okp
-           (apply ,handler ,req ,resp ,args))))))
+    `(let ((,req (resp-request ,resp)))
+       (when (string-equal (req-method ,req) ,method)
+         (multiple-value-bind (,args ,okp)
+             (path-equal ',plist (url-path (req-url ,req)))
+           (when ,okp
+             (apply ,handler ,req ,resp ,args)))))))
 
 ;;; ----------------------------------------------------
 
@@ -92,4 +93,3 @@
 
        ;; collect the parameter list that will be routed as keywords
        into plist)))
-

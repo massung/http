@@ -206,11 +206,12 @@ The *event-callback* should be a function that takes 3 parameters when called: t
 
 If you would like to host a simple HTTP server, this package handles accepting the incoming connections, parsing the requests, and sending your responses back.
 
-    (http-simple-server router server-config &key name port)
+    (http-simple-server handler server-config &key name port)
 
 The simplest, "Hello, world" server example would be:
 
-    CL-USER > (http-simple-server #'(lambda (req resp) (http-ok resp "Hello, world!")))
+    CL-USER > (http-simple-server #'(lambda (resp)
+                                      (http-ok resp "Hello, world!")))
     #<PROCESS HTTP Server>
 
 Let's test it.
@@ -221,7 +222,7 @@ Let's test it.
     CL-USER > (resp-body *)
     "Hello, world!"
 
-Each time a request is made, the *route* function supplied is called with the HTTP request made and the response that will be returned back. You are expected to fill out the response appropriately.
+Each time a request is made, the *handler* function supplied is called with the HTTP response that will be returned back (note: the response can get the request). You are expected to fill out the response appropriately.
 
 ### Responses
 
@@ -250,7 +251,7 @@ Here is an example router:
 
 Most important in this example is the *user-page* route: it shows the use of a keyword argument to the *route-handler*, which should now be defined as:
 
-    (defun user-page (req resp &key id) ...)
+    (defun user-page (resp &key id) ...)
 
 If a user were to request the page `my-site.com/user/10383`, when *user-page* is called, *id* will be bound to "10383".
 

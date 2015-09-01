@@ -90,7 +90,7 @@
            (unwind-protect
                (let ((resp (make-response http)))
                  (handler-case
-                     (funcall router (resp-request resp) resp)
+                     (funcall router resp)
                    (condition (c)
                      (http-internal-server-error resp c)))
 
@@ -137,14 +137,14 @@
 
 ;;; ----------------------------------------------------
 
-(defun send-response (response http)
+(defun send-response (resp http)
   "Send a response back over the wire."
   (unwind-protect
-      (let ((code (resp-code response))
-            (status (resp-status response))
-            (body (resp-body response))
-            (headers (http-headers response))
-            (req (resp-request response)))
+      (let ((code (resp-code resp))
+            (status (resp-status resp))
+            (body (resp-body resp))
+            (headers (http-headers resp))
+            (req (resp-request resp)))
 
         ;; send the code and status string
         (format http "HTTP/1.1 ~d~@[ ~a~]" code status)

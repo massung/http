@@ -165,13 +165,7 @@
            (loc (http-header resp "Location"))
 
            ;; the redirect location might be relative (to the domain)
-           (new-url (url-parse loc)))
-
-      ;; keep the query and fragment if present in the request
-      (unless (url-query new-url)
-        (setf (url-query new-url) (url-query url)))
-      (unless (url-fragment new-url)
-        (setf (url-fragment new-url) (url-fragment url)))
+           (new-url (url-parse loc :relative-url url)))
 
       ;; create the new request - keep the same method unless a 303
       (make-instance 'request
