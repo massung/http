@@ -85,10 +85,13 @@
      while n
 
      ;; create a chunk for reading from the stream
-     for chunk = (make-array n :element-type 'octet)
+     for chunk = (make-array n :element-type 'octet :fill-pointer t)
 
      ;; expand the chunk if needed, and read the sequence
      for bytes-read = (read-sequence chunk http)
+
+     ;; make sure to clamp extra bytes
+     do (setf (fill-pointer chunk) bytes-read)
 
      ;; stop once nothing else was read
      while (plusp bytes-read)
