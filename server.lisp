@@ -17,394 +17,347 @@
 ;;;; under the License.
 ;;;;
 
-(defpackage :http-server
-  (:use :cl :ccl :re :http :url)
-  (:export
-   #:http-simple-server
-
-   ;; route and page macros
-   #:define-http-router
-   #:define-http-page
-
-   ;; response generation
-   #:http-continue
-   #:http-switching-protocols
-   #:http-ok
-   #:http-created
-   #:http-accepted
-   #:http-non-authoritative
-   #:http-no-content
-   #:http-reset-content
-   #:http-partial-content
-   #:http-moved-permanently
-   #:http-found
-   #:http-see-other
-   #:http-not-modified
-   #:http-temporary-redirect
-   #:http-bad-request
-   #:http-unauthorized
-   #:http-forbidden
-   #:http-not-found
-   #:http-method-not-allowed
-   #:http-not-acceptable
-   #:http-proxy-required
-   #:http-request-timeout
-   #:http-conflict
-   #:http-gone
-   #:http-length-required
-   #:http-precondition-failed
-   #:http-request-too-large
-   #:http-request-uri-too-long
-   #:http-unsupported-media-type
-   #:http-range-not-satisfiable
-   #:http-expectation-failed
-   #:http-internal-server-error
-   #:http-not-implemented
-   #:http-bad-gateway
-   #:http-service-unavailable
-   #:http-gateway-timeout
-   #:http-version-not-supported))
-
-(in-package :http-server)
+(in-package :http)
 
 ;;; ----------------------------------------------------
 
-(defparameter *req-re* (compile-re "(%u+)%s+([^%s]+)%s+HTTP/([^%s]+)")
-  "HTTP request line pattern.")
+(defclass http-server-config ()
+  ((port            :initarg :port            :initform 8000)
+   (session-class   :initarg :session-class   :initform 'http-session)
+   (session-timeout :initarg :session-timeout :initform 10)
+   (not-found       :initarg :not-found-route :initform nil)
+   (server-error    :initarg :error-route     :initform nil))
+  (:documentation "Basic HTTP server configuration options."))
 
 ;;; ----------------------------------------------------
 
-(defun http-simple-server (router &key (port 8000))
+(defun http-simple-server (router &key config)
   "Start a server process that will process incoming HTTP requests."
-  (let ((sock (make-socket :type :stream
-                           :connect :passive
-                           :reuse-address t
-                           :local-port port)))
-    (process-run-function "HTTP Server" 'server-loop sock router)))
+  (let* ((config (if config
+                     config
+                   (make-instance 'http-server-config)))
+
+         ;; create a server socket using the configuration
+         (sock (make-socket :type :stream
+                            :connect :passive
+                            :reuse-address t
+                            :local-port (slot-value config 'port))))
+
+    ;; start the server process
+    (process-run-function "HTTP"
+                          'http-server-loop
+                          sock
+                          router
+                          config)))
 
 ;;; ----------------------------------------------------
 
-(defun server-loop (socket router)
+(defun http-server-loop (socket router config)
   "Infinite loop, accepting new connections and routing them."
-  (flet ((handle-request (http)
-           (unwind-protect
-               (let ((resp (make-response http)))
-                 (handler-case
-                     (funcall router resp)
-                   (condition (c)
-                     (http-internal-server-error resp c)))
-
-                 ;; send the response
-                 (send-response resp http))
-             (close http))))
-
-    ;; loop forever, accepting new connections
+  (let ((session-map (make-hash-table :test 'equal))
+        (session-lock (make-read-write-lock)))
     (unwind-protect
-        (loop (let ((http (accept-connection socket :wait t)))
-                (process-run-function "Request" #'handle-request http)))
+         (loop
+            (http-accept-request socket
+                                 router
+                                 config
+                                 session-map
+                                 session-lock)
+
+            ;; remove old sessions from the map
+            (http-timeout-sessions config session-map session-lock))
+
+      ;; server process finished
       (close socket))))
 
 ;;; ----------------------------------------------------
 
-(defun read-http-request (http)
-  "Read from a stream into a request."
-  (with-re-match (m (match-re *req-re* (read-line http nil "")))
-    (let* ((headers (http::read-http-headers http))
-
-           ;; extract the Host and Content-Length from the request
-           (host (assoc "Host" headers :test #'string-equal))
-           (len (assoc "Content-Length" headers :test #'string-equal))
-
-           ;; create the url the request used from the host and path
-           (url (concatenate 'string (or (second host) "localhost") $2))
-
-           ;; parse the body if there is content
-           (body (when len
-                   (http::read-http-content http (second len)))))
-
-      ;; create the request object
-      (make-instance 'request
-                     :method $1
-                     :headers headers
-                     :data body
-                     :url (url-parse url)))))
+(defun http-timeout-sessions (config session-map session-lock)
+  "Loop over all sessions and remove ones that have timed out."
+  (let ((now (get-universal-time))
+        (timeout (* (slot-value config 'session-timeout) 60)))
+    (flet ((timeout-session (sid session)
+             (if (> (- now (http-session-time session)) timeout)
+                 (remhash sid session-map)
+               (http-timeout-continuations session timeout))))
+      (with-write-lock (session-lock)
+        (maphash #'timeout-session session-map)))))
 
 ;;; ----------------------------------------------------
 
-(defun make-response (http)
-  "Create a response from the stream and request."
-  (make-instance 'response :stream http :request (read-http-request http)))
+(defun http-accept-request (socket router config session-map session-lock)
+  "Wait for a new connection and then handle the request."
+  (let ((http (accept-connection socket :wait t)))
+    (process-run-function "Request"
+                          'http-handle-request
+                          http
+                          router
+                          config
+                          session-map
+                          session-lock)))
 
 ;;; ----------------------------------------------------
 
-(defun send-response (resp http)
-  "Send a response back over the wire."
-  (unwind-protect
-      (let ((code (resp-code resp))
-            (status (resp-status resp))
-            (body (resp-body resp))
-            (headers (http-headers resp))
-            (req (resp-request resp)))
+(defun http-handle-request (http router config session-map session-lock)
+  "Process a single HTTP request and send a response."
+  (let ((resp (http-make-response http)))
+    (if resp
+        (let* ((req (resp-request resp))
 
-        ;; send the code and status string
-        (format http "HTTP/1.1 ~d~@[ ~a~]" code status)
+               ;; lookup the session from the request
+               (session (let ((sid (http-read-session-id req)))
+                          (when sid
+                            (with-read-lock (session-lock)
+                              (gethash sid session-map))))))
 
-        ;; begin headers
-        (http::write-http-header http)
+          ;; if there's no session, make a new one
+          (unless session
+            (setf session (http-make-session resp config))
 
-        ;; send any and all headers back
-        (dolist (header headers)
-          (http::write-http-header http (first header) (second header)))
+            ;; add the session to the session map
+            (with-write-lock (session-lock)
+              (setf (gethash (http-session-id session) session-map) session)))
 
-        ;; close the connection when done
-        (http::write-http-header http "Connection" "close")
+          ;; refresh the session with a new timestamp
+          (setf (http-session-time session) (get-universal-time))
 
-        ;; end of headers
-        (http::write-http-header http)
+          ;; route the response, then send the response back
+          (unwind-protect
+               (let ((cont (http-find-continuation session resp)))
+                 (if cont
+                     (funcall cont session resp)
+                   (http-route-response resp session router config))
+                 (http-write-response resp))
 
-        ;; send the body if present and not a HEAD request
-        (when (and body req (string/= (req-method req) "HEAD"))
-          (write-sequence body http)))
+            ;; close the connection unless the server wants it alive
+            (let ((connection (http-header resp "Connection")))
+              (unless (string-equal connection "keep-alive")
+                (shutdown http :direction :output)))))
 
-    ;; make sure anything that has been written flushes
-    (force-output http)))
+      ;; failed to parse the request and make a response, just quit
+      (close http))))
 
 ;;; ----------------------------------------------------
 
-(defmacro define-http-response (reply (code status &rest hs) doc)
+(defun http-route-response (resp session router config)
+  "Attempt to route the request to the appropriate handler."
+  (with-slots (not-found server-error)
+      config
+    (handler-case
+        (unless (funcall router session resp)
+          (if not-found
+              (funcall not-found session resp)
+            (http-not-found resp)))
+
+      ;; conditions trigger a server error
+      (condition (c)
+        (if server-error
+            (funcall server-error session resp)
+          (http-internal-server-error resp c))))))
+
+;;; ----------------------------------------------------
+
+(defmacro define-http-response (reply code (&key status headers))
   "Create an HTTP response generation."
-  (let ((args (mapcar #'gensym hs))
-        (resp (gensym "resp"))
-        (body (gensym "body")))
-    `(defun ,reply (,resp ,@args &optional ,body)
-       ,doc
-       (setf (resp-body ,resp) (when ,body (princ-to-string ,body))
+  (let ((resp (gensym "resp"))
+        (body (gensym "body"))
 
-             ;; set the headers from the arguments passed in
-             ,@(loop for a in args and h in hs appending
-                 `((http-header ,resp ,h) ,a))
+        ;; create an argument for each required header
+        (args (mapcar #'gensym headers)))
+    `(eval-when (:compile-toplevel :load-toplevel :execute)
+       (defun ,reply (,resp ,@args &optional ,body)
+         (setf (resp-code ,resp) ,code
+               (resp-status ,resp) ,status
 
-             ;; set the response code and status
-             (resp-code ,resp) ,code
-             (resp-status ,resp) ,status))))
+               ;; set the headers from the arguments passed in
+               ,@(loop for a in args and h in headers appending
+                      `((http-header ,resp ,h) ,a))
 
-;;; ----------------------------------------------------
-
-(define-http-response http-continue
-    (100 "Continue")
-  "The client should continue with its request.")
+               ;; set the body if it was provided
+               (resp-body ,resp) ,body))
+       (export ',reply :http))))
 
 ;;; ----------------------------------------------------
 
-(define-http-response http-switching-protocols
-    (101 "Switching Protocols")
-  "The server is willing to comply with the client's request.")
+(define-http-response http-continue 100
+  (:status "Continue"))
 
 ;;; ----------------------------------------------------
 
-(define-http-response http-ok
-    (200 "OK")
-  "The request hash-table succeeded.")
+(define-http-response http-switching-protocols 101
+  (:status "Switching Protocols"))
 
 ;;; ----------------------------------------------------
 
-(define-http-response http-created
-    (201 "Created")
-  "The request has been fulfilled and a new resource created.")
+(define-http-response http-ok 200
+  (:status "OK"))
 
 ;;; ----------------------------------------------------
 
-(define-http-response http-accepted
-    (202 "Accepted")
-  "The request has been fulfilled and a new resource created.")
+(define-http-response http-created 201
+  (:status "Created"))
 
 ;;; ----------------------------------------------------
 
-(define-http-response http-non-authoritative
-    (203 "Non-Authoritative Information")
-  "The returned information is not as definitive as from the origin server.")
+(define-http-response http-accepted 202
+  (:status "Accepted"))
 
 ;;; ----------------------------------------------------
 
-(define-http-response http-no-content
-    (204 "No Content")
-  "The server has fulfilled the request but did return a body.")
+(define-http-response http-non-authoritative 203
+  (:status "Non-Authoritative Information"))
 
 ;;; ----------------------------------------------------
 
-(define-http-response http-reset-content
-    (205 "Reset Content")
-  "The server has fulfilled the request; the document view should reset.")
+(define-http-response http-no-content 204
+  (:status "No Content"))
 
 ;;; ----------------------------------------------------
 
-(define-http-response http-partial-content
-    (206 "Partial Content")
-  "The server has fulfilled the partial GET request for the resource.")
+(define-http-response http-reset-content 205
+  (:status "Reset Content"))
 
 ;;; ----------------------------------------------------
 
-(define-http-response http-moved-permanently
-    (301 "Moved Permanently" "Location")
-  "The requested resource has been assigned a new permanent URI.")
+(define-http-response http-partial-content 206
+  (:status "Partial Content"))
 
 ;;; ----------------------------------------------------
 
-(define-http-response http-found
-    (302 "Found" "Location")
-  "The requested resource resides temporarily under a different URI.")
+(define-http-response http-moved-permanently 301
+  (:status "Moved Permanently" :headers ("Location")))
 
 ;;; ----------------------------------------------------
 
-(define-http-response http-see-other
-    (303 "See Other" "Location")
-  "The response to the request can be found under a different URI.")
+(define-http-response http-found 302
+  (:status "Found" :headers ("Location")))
 
 ;;; ----------------------------------------------------
 
-(define-http-response http-not-modified
-    (304 "Not Modified")
-  "The response to the request can be found under a different URI.")
-;;; ----------------------------------------------------
-
-(define-http-response http-temporary-redirect
-    (307 "Temporary Redirect" "Location")
-  "The requested resource resides temporarily under a different URI.")
+(define-http-response http-see-other 303
+  (:status "See Other" :headers ("Location")))
 
 ;;; ----------------------------------------------------
 
-(define-http-response http-bad-request
-    (400 "Bad Request")
-  "The request contained malformed syntax.")
+(define-http-response http-not-modified 304
+  (:status "Not Modified"))
 
 ;;; ----------------------------------------------------
 
-(define-http-response http-unauthorized
-    (401 "Unauthorized")
-  "The request requires user authentication.")
+(define-http-response http-temporary-redirect 307
+  (:status "Temporary Redirect" :headers ("Location")))
 
 ;;; ----------------------------------------------------
 
-(define-http-response http-forbidden
-    (403 "Forbidden")
-  "The server understood the request, but is refusing to fulfill it.")
+(define-http-response http-bad-request 400
+  (:status "Bad Request"))
 
 ;;; ----------------------------------------------------
 
-(define-http-response http-not-found
-    (404 "Not Found")
-  "The server has not found anything matching the Request-URI.")
+(define-http-response http-unauthorized 401
+  (:status "Unauthorized"))
 
 ;;; ----------------------------------------------------
 
-(define-http-response http-method-not-allowed
-    (405 "Method Not Allowed")
-  "The server has not found anything matching the Request-URI.")
+(define-http-response http-forbidden 403
+  (:status "Forbidden"))
 
 ;;; ----------------------------------------------------
 
-(define-http-response http-not-acceptable
-    (406 "Not Acceptable")
-  "The resource contents are not accepted by the request Accept header.")
+(define-http-response http-not-found 404
+  (:status "Not Found"))
 
 ;;; ----------------------------------------------------
 
-(define-http-response http-proxy-required
-    (407 "Proxy Required")
-  "The client must first authenticate itself with the proxy.")
+(define-http-response http-method-not-allowed 405
+  (:status "Method Not Allowed"))
 
 ;;; ----------------------------------------------------
 
-(define-http-response http-request-timeout
-    (408 "Request Timeout")
-  "The client did not produce a request within the time allotted.")
+(define-http-response http-not-acceptable 406
+  (:status "Not Acceptable"))
 
 ;;; ----------------------------------------------------
 
-(define-http-response http-conflict
-    (409 "Conflict")
-  "The request could not be completed due to a conflict.")
+(define-http-response http-proxy-required 407
+  (:status "Proxy Required"))
 
 ;;; ----------------------------------------------------
 
-(define-http-response http-gone
-    (410 "Gone")
-  "The requested resource is no longer available at the server.")
+(define-http-response http-request-timeout 408
+  (:status "Request Timeout"))
 
 ;;; ----------------------------------------------------
 
-(define-http-response http-length-required
-    (411 "Length Required")
-  "The server refuses to accept the request without a Content-Length.")
+(define-http-response http-conflict 409
+  (:status "Conflict"))
 
 ;;; ----------------------------------------------------
 
-(define-http-response http-precondition-failed
-    (412 "Precondition Failed")
-  "The precondition given evaluated to false.")
+(define-http-response http-gone 410
+  (:status "Gone"))
 
 ;;; ----------------------------------------------------
 
-(define-http-response http-request-too-large
-    (413 "Request Entity Too Large")
-  "The server is refusing to process a request.")
+(define-http-response http-length-required 411
+  (:status "Length Required"))
 
 ;;; ----------------------------------------------------
 
-(define-http-response http-request-uri-too-long
-    (414 "Request URI Too Long")
-  "The server is refusing to service the request.")
+(define-http-response http-precondition-failed 412
+  (:status "Precondition Failed"))
 
 ;;; ----------------------------------------------------
 
-(define-http-response http-unsupported-media-type
-    (415 "Unsupported Media Type")
-  "The server is refusing to service the request.")
+(define-http-response http-request-too-large 413
+  (:status "Request Entity Too Large"))
 
 ;;; ----------------------------------------------------
 
-(define-http-response http-range-not-satisfiable
-    (416 "Request Range Not Satisfiable")
-  "The Range request-header field does not overlap the resource extent.")
+(define-http-response http-request-uri-too-long 414
+  (:status "Request URI Too Long"))
 
 ;;; ----------------------------------------------------
 
-(define-http-response http-expectation-failed
-    (417 "Expectation Failed")
-  "The Expect request-header field could not be met by this server.")
+(define-http-response http-unsupported-media-type 415
+  (:status "Unsupported Media Type"))
 
 ;;; ----------------------------------------------------
 
-(define-http-response http-internal-server-error
-    (500 "Internal Server Error")
-  "The server encountered an unexpected condition.")
+(define-http-response http-range-not-satisfiable 416
+  (:status "Request Range Not Satisfiable"))
 
 ;;; ----------------------------------------------------
 
-(define-http-response http-not-implemented
-    (501 "Not Implemented")
-  "The server does not support the functionality required.")
+(define-http-response http-expectation-failed 417
+  (:status "Expectation Failed"))
 
 ;;; ----------------------------------------------------
 
-(define-http-response http-bad-gateway
-    (502 "Bad Gateway")
-  "The server received an invalid response from the upstream server.")
+(define-http-response http-internal-server-error 500
+  (:status "Internal Server Error"))
 
 ;;; ----------------------------------------------------
 
-(define-http-response http-service-unavailable
-    (503 "Service Unavailable")
-  "The server is currently unable to handle the request.")
+(define-http-response http-not-implemented 501
+  (:status "Not Implemented"))
 
 ;;; ----------------------------------------------------
 
-(define-http-response http-gateway-timeout
-    (504 "Gateway Timeout")
-  "The server, did not receive a timely response from an upstream server.")
+(define-http-response http-bad-gateway 502
+  (:status "Bad Gateway"))
 
 ;;; ----------------------------------------------------
 
-(define-http-response http-version-not-supported
-    (505 "HTTP Version Not Supported")
-  "The server does not support the HTTP protocol version that was used.")
+(define-http-response http-service-unavailable 503
+  (:status "Service Unavailable"))
+
+;;; ----------------------------------------------------
+
+(define-http-response http-gateway-timeout 504
+  (:status "Gateway Timeout"))
+
+;;; ----------------------------------------------------
+
+(define-http-response http-version-not-supported 505
+  (:status "HTTP Version Not Supported"))

@@ -19,7 +19,9 @@
 
 (in-package :http)
 
-(defun open-http-event-stream (req event-callback &key (redirect-limit 3))
+;;; ----------------------------------------------------
+
+(defun http-open-event-stream (req event-callback &key (redirect-limit 3))
   "Create an HTTP socket to an event stream end-point and process events."
   (setf (req-keep-alive req) t
         (req-read-body req) nil
@@ -35,7 +37,7 @@
     ;; ensure that the socket is closed when done
     (unwind-protect
         (cond ((<= 200 (resp-code resp) 299)
-               (return (process-http-event-stream resp event-callback)))
+               (return (http-process-event-stream resp event-callback)))
 
               ;; if the response requires a redirect, do so
               ((<= 300 (resp-code resp) 399)
@@ -47,7 +49,9 @@
               (t (return resp)))
       (close (resp-stream resp)))))
 
-(defun process-http-event-stream (resp event-callback)
+;;; ----------------------------------------------------
+
+(defun http-process-event-stream (resp event-callback)
   "Keep reading event data and handing it off to various handlers."
   (let ((http (resp-stream resp))
 
@@ -89,7 +93,7 @@
                  (cond ((string= key "id")    (setf last-id value))
                        ((string= key "event") (setf event value))
 
-                       ;; the data field collects values appended by newlines
+                       ;; the data field collects values with newlines
                        ((string= key "data")  (format data "~a~%" value))
 
                        ;; set the stream reconnect time

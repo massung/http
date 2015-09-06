@@ -21,18 +21,13 @@
 
 ;;; ----------------------------------------------------
 
-(defparameter *status-re* (compile-re "^HTTP/%S+%s+(%d+)%s*(%N*)")
-  "Pattern for parsing response code and status message.")
-
-;;; ----------------------------------------------------
-
 (defclass response (headers)
-  ((http   :initarg :stream       :accessor resp-stream       :initform nil)
-   (req    :initarg :request      :accessor resp-request      :initform nil)
-   (code   :initarg :code         :accessor resp-code         :initform nil)
-   (status :initarg :status       :accessor resp-status       :initform nil)
-   (body   :initarg :body         :accessor resp-body         :initform nil)
-   (type   :initarg :content-type :accessor resp-content-type :initform nil))
+  ((stream   :initarg :stream   :initform nil   :accessor resp-stream)
+   (req      :initarg :request  :initform nil   :accessor resp-request)
+   (protocol :initarg :protocol :initform "1.0" :accessor resp-protocol)
+   (code     :initarg :code     :initform nil   :accessor resp-code)
+   (status   :initarg :status   :initform nil   :accessor resp-status)
+   (body     :initarg :body     :initform nil   :accessor resp-body))
   (:documentation "The response from a request to an HTTP server."))
 
 ;;; ----------------------------------------------------
@@ -41,12 +36,6 @@
   "Output an HTTP response to a stream."
   (print-unreadable-object (resp stream :type t)
     (format stream "~a ~s" (resp-code resp) (resp-status resp))))
-
-;;; ----------------------------------------------------
-
-(defmethod (setf resp-content-type) :after (content-type (resp response))
-  "Update the headers for the response when the content type changes."
-  (write-content-type resp content-type))
 
 ;;; ----------------------------------------------------
 
@@ -65,14 +54,15 @@
 
 ;;; ----------------------------------------------------
 
-(defun read-http-status (http)
+(defun http-read-status (http)
   "Parse the line and parse it. Return the code and value."
-  (with-re-match (match (match-re *status-re* (read-line http)))
-    (values (parse-integer $1) $2)))
+  (let ((line (read-line http)))
+    (with-re-match (match (match-re #r"^HTTP/(%S+)%s+(%d+)%s*(%N*)" line))
+      (values $1 (parse-integer $2) $3))))
 
 ;;; ----------------------------------------------------
 
-(defun read-http-content-chunked (http &optional chunk-size)
+(defun http-read-content-chunked (http &optional chunk-size)
   "Read the body from the HTTP server using a chunked Transfer-Encoding."
   (loop
 
@@ -104,60 +94,104 @@
 
 ;;; ----------------------------------------------------
 
-(defun read-http-content (http &optional content-length)
+(defun http-read-content (http &optional content-length)
   "Read the rest of the response from the HTTP server."
-  (if content-length
-      (let* ((n (parse-integer content-length))
-             (body (make-array n :element-type 'octet)))
-        (prog1 body
-          (read-sequence body http)))
+  (cond ((null content-length)
+         (http-read-content-chunked http 4000))
 
-    ;; read 4K chunks while there is still data to read
-    (read-http-content-chunked http 4000)))
+        ;; if a string from a header, parse, and retry
+        ((stringp content-length)
+         (let ((n (parse-integer content-length :junk-allowed t)))
+           (http-read-content http n)))
+
+        ;; read the body, assuming length is ok
+        (t (let ((body (make-array content-length :element-type 'octet)))
+             (prog1 body
+               (read-sequence body http))))))
 
 ;;; ----------------------------------------------------
 
-(defun read-http-response (http req)
+(defun http-read-response (req http)
   "Read a response string from an HTTP socket stream and parse it."
-  (multiple-value-bind (code status)
-      (read-http-status http)
-    (let ((resp (make-instance 'response
-                               :request req
-                               :stream http
-                               :code code
-                               :status status
-                               :content-type nil
-                               :headers (read-http-headers http))))
+  (multiple-value-bind (protocol code status)
+      (http-read-status http)
+    (let* ((headers (http-read-headers http))
+
+           ;; create the response
+           (resp (make-instance 'response
+                                :request req
+                                :stream http
+                                :protocol protocol
+                                :code code
+                                :status status
+                                :headers (http-headers headers))))
+
+      ;; return the response, but read the body first if wanted
       (prog1 resp
-
-        ;; determine the content-type of the body
-        (setf (resp-content-type resp) (read-content-type resp))
-
-        ;; if the request wanted to read the body, then read it
         (when (req-read-body req)
-          (read-http-response-body resp))))))
+          (http-read-response-body resp))))))
 
 ;;; ----------------------------------------------------
 
-(defun read-http-response-body (resp)
+(defun http-read-response-body (resp)
   "Read the response body from the stream."
-  (with-slots (http body type)
+  (with-slots (stream body)
       resp
 
-    ;; get the content length and the transfer type (e.g. chunked)
-    (with-headers ((len "Content-Length")
-                   (encoding "Transfer-Encoding"))
-        resp
+    ;; get the content length and the transfer type
+    (let ((length (http-header resp "Content-Length"))
+          (encoding (http-header resp "Transfer-Encoding")))
 
-      ;; read the response body
-      (setf body (cond ((null encoding)
-                        (read-http-content http len))
-                       ((string= encoding "identity")
-                        (read-http-content http len))
-                       ((string= encoding "chunked")
-                        (read-http-content-chunked http))))
+      ;; read the content based on length and transfer encoding
+      (setf (resp-body resp)
+            (cond ((null encoding)
+                   (http-read-content stream length))
+                  ((string= encoding "identity")
+                   (http-read-content stream length))
+                  ((string= encoding "chunked")
+                   (http-read-content-chunked stream))))
 
-      ;; if the content-type is text, then decode the body
-      (unless (binary-content-type-p type)
-        (let ((f (content-type-external-format type)))
-          (setf body (decode-string-from-octets body :external-format f)))))))
+      ;; attempt to decode the body
+      (http-decode-response-body resp))))
+
+;;; ----------------------------------------------------
+
+(defun http-decode-response-body (resp)
+  "Lookup the content type header and decode with the correct format."
+  (setf (resp-body resp) (http-decode (resp-body resp) resp)))
+
+;;; ----------------------------------------------------
+
+(defun http-make-response (http)
+  "Read a request and initialize a new response."
+  (let ((req (http-read-request http)))
+    (when req
+      (make-instance 'response :stream http :request req))))
+
+;;; ----------------------------------------------------
+
+(defun http-write-response (resp)
+  "Send a response back over the wire."
+  (let ((http (resp-stream resp))
+        (code (resp-code resp))
+        (status (resp-status resp))
+        (body (resp-body resp))
+        (req (resp-request resp)))
+
+    ;; send the code and status string
+    (format http "HTTP/1.1 ~d~@[ ~a~]" code status)
+
+    ;; begin headers
+    (write-char #\return http)
+    (write-char #\linefeed http)
+
+    ;; send any and all headers back
+    (http-write-headers resp http)
+
+    ;; send the body if present and not a HEAD request
+    (when (and body req (string/= (req-method req) "HEAD"))
+      (let ((bytes (http-encode body resp)))
+        (write-sequence bytes http)))
+
+    ;; make sure anything that has been written flushes
+    (force-output http)))

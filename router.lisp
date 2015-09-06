@@ -1,4 +1,4 @@
-;;;; Simple HTTP Server Router for ClozureCL
+;;;; Simple HTTP Server for ClozureCL
 ;;;;
 ;;;; Copyright (c) Jeffrey Massung
 ;;;;
@@ -17,30 +17,25 @@
 ;;;; under the License.
 ;;;;
 
-(in-package :http-server)
-
-;;; ----------------------------------------------------
-
-(defparameter *path-spec-re* (compile-re "(?/([^/]+)?)+")
-  "Path specification regular expression.")
+(in-package :http)
 
 ;;; ----------------------------------------------------
 
 (defmacro define-http-router (router &body routes)
   "Define a simple router function."
-  (let ((resp (gensym "resp")))
+  (let ((resp (gensym "resp"))
+        (session (gensym "session")))
     (labels ((try-routes (r rs)
-               (if (null r)
-                   `(http-not-found ,resp)
-                 `(if ,(apply #'make-route resp r)
+               (when r
+                 `(if ,(apply #'http-make-route session resp r)
                       t
                     ,(try-routes (first rs) (rest rs))))))
-      `(defun ,router (,resp)
+      `(defun ,router (,session ,resp)
          ,(try-routes (first routes) (rest routes))))))
 
 ;;; ----------------------------------------------------
 
-(defun make-route (resp method path-spec handler)
+(defun http-make-route (session resp method path-spec handler)
   "Create a path router that will call a handler function on match."
   (let ((okp (gensym "okp"))
         (args (gensym "args"))
@@ -48,7 +43,7 @@
 
         ;; the parameter list for the path-spec
         (plist (loop
-                  with m = (match-re *path-spec-re* path-spec :exact t)
+                  with m = (match-re #r"(?/([^/]+)?)+" path-spec :exact t)
 
                   ;; each capture group is a path entry
                   for path in (match-groups m)
@@ -68,15 +63,15 @@
     `(let ((,req (resp-request ,resp)))
        (when (string-equal (req-method ,req) ,method)
          (multiple-value-bind (,args ,okp)
-             (path-equal ',plist (url-path (req-url ,req)))
+             (http-path-equal ',plist (url-path (req-url ,req)))
            (when ,okp
-             (apply ,handler ,req ,resp ,args)))))))
+             (apply ,handler ,session ,resp ,args)))))))
 
 ;;; ----------------------------------------------------
 
-(defun path-equal (spec path)
+(defun http-path-equal (spec path)
   "Return T if equal and a list of all arguments as a plist."
-  (with-re-match (m (match-re *path-spec-re* path :exact t))
+  (with-re-match (m (match-re #r"(?/([^/]+)?)+" path :exact t))
     (loop
        for spec-element = (pop spec)
        for path-element = (pop $*)
@@ -89,7 +84,7 @@
        appending (if (keywordp spec-element)
                      (list spec-element path-element)
                    (unless (string= spec-element path-element)
-                     (return-from path-equal nil)))
+                     (return-from http-path-equal nil)))
 
        ;; collect the parameter list that will be routed as keywords
        into plist)))

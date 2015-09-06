@@ -22,13 +22,8 @@
 ;;; ----------------------------------------------------
 
 (defclass headers ()
-  ((headers :initarg :headers :accessor http-headers :initform nil))
+  ((headers :initarg :headers :initform nil :accessor http-headers))
   (:documentation "Base class for requests and responses."))
-
-;;; ----------------------------------------------------
-
-(defparameter *header-re* (compile-re "^([^:]+):%s*([^%n]*)")
-  "Pattern for parsing a response header line.")
 
 ;;; ----------------------------------------------------
 
@@ -37,6 +32,8 @@
   `(symbol-macrolet
        (,@(loop
              for binding in bindings
+
+             ;; create a binding for each header key
              collect (destructuring-bind (var key &key all)
                          binding
                        `(,var (http-header ,object ,key :all ,all)))))
@@ -44,14 +41,14 @@
 
 ;;; ----------------------------------------------------
 
-(defun http-header (hs header &key all)
-  "Returns the value of a request header."
+(defun http-header (headers header &key all)
+  "Returns the value(s) of a request header."
   (if all
-      (mapcar #'second (remove header
-                               (http-headers hs)
-                               :test-not #'string-equal
-                               :key #'first))
-    (second (assoc header (http-headers hs) :test #'string-equal))))
+      (loop
+         for (k v) in (http-headers headers)
+         when (string-equal k header)
+         collect v)
+    (second (assoc header (http-headers headers) :test #'string-equal))))
 
 ;;; ----------------------------------------------------
 
@@ -63,7 +60,7 @@
         (new-value (gensym)))
     `(let* ((,hs ,headers)
             (,h ,header)
-            (,new-value (princ-to-string ,value))
+            (,new-value ,value)
             (,place (assoc ,h (http-headers ,hs) :test #'string-equal)))
        (prog1 ,new-value
          (if ,place
@@ -72,33 +69,39 @@
 
 ;;; ----------------------------------------------------
 
-(defun read-http-headers (http)
-  "Parse a header line. Return the key and value."
-  (flet ((read-header ()
-           (with-re-match (match (match-re *header-re* (read-line http)))
-             (list $1 $2))))
-    (loop for header = (read-header) while header collect header)))
+(defun http-read-header (http)
+  "Read a single header key/value pair from a stream."
+  (let ((m (match-re #r"^([^:]+):%s*([^%n]*)" (read-line http))))
+    (when m
+      (match-groups m))))
 
 ;;; ----------------------------------------------------
 
-(defun write-http-header (http &optional key value)
-  "Optionally send a header k/v pair to the request stream."
-  (when key
-    (format http "~a: ~@[~a~]" key value))
-
-  ;; end the line
-  (write-char #\return http)
-  (write-char #\linefeed http))
+(defun http-write-header (key value http)
+  "Write a key/value pair header to a stream."
+  (when (and key value)
+    (format http "~a: ~a~c~c" key value #\return #\linefeed)))
 
 ;;; ----------------------------------------------------
 
-(defun write-http-headers (http headers)
-  "Send all the headers to an HTTP stream."
-  (write-http-header http)
+(defun http-read-headers (http)
+  "Read all the key/value pair headers from a stream."
+  (loop
+     for header = (http-read-header http) while header
 
-  ;; write all the headers
-  (dolist (header headers)
-    (apply #'write-http-header http header))
+     ;; build a list of all header (k v) pairs
+     collect header into hs
+
+     ;; return a headers instance
+     finally (return (make-instance 'headers :headers hs))))
+
+;;; ----------------------------------------------------
+
+(defun http-write-headers (headers http)
+  "Write all the key/value header pairs to a stream."
+  (dolist (header (http-headers headers))
+    (http-write-header (first header) (second header) http))
 
   ;; finish the headers with an empty line
-  (write-http-header http))
+  (write-char #\return http)
+  (write-char #\linefeed http))

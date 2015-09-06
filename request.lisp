@@ -22,12 +22,13 @@
 ;;; ----------------------------------------------------
 
 (defclass request (headers)
-  ((url        :initarg :url        :accessor req-url        :initform nil)
-   (method     :initarg :method     :accessor req-method     :initform "GET")
-   (keep-alive :initarg :keep-alive :accessor req-keep-alive :initform nil)
-   (read-body  :initarg :read-body  :accessor req-read-body  :initform t)
-   (data       :initarg :data       :accessor req-data       :initform nil))
-  (:documentation "A request for a URL from an HTTP server."))
+  ((method     :initarg :method     :initform "GET" :accessor req-method)
+   (protocol   :initarg :protocol   :initform "1.0" :accessor req-protocol)
+   (url        :initarg :url        :initform nil   :accessor req-url)
+   (keep-alive :initarg :keep-alive :initform nil   :accessor req-keep-alive)
+   (read-body  :initarg :read-body  :initform t     :accessor req-read-body)
+   (body       :initarg :body       :initform nil   :accessor req-body))
+  (:documentation "An HTTP request to be responded to by an HTTP server."))
 
 ;;; ----------------------------------------------------
 
@@ -36,210 +37,105 @@
   (print-unreadable-object (req s :type t)
     (with-slots (method url)
         req
-      (format s "~a ~s" method (princ-to-string url)))))
+      (format s "~a ~a" method url))))
 
 ;;; ----------------------------------------------------
 
-(defmethod initialize-instance :after ((req request) &key &allow-other-keys)
-  "Make sure the URL - if a string - is parsed."
-  (with-slots (url)
-      req
-    (when (stringp url)
-      (setf url (url-parse url)))))
+(defun http-make-request (url &rest initargs)
+  "Create a new HTTP request."
+  (with-url (url url)
+    (apply 'make-instance 'request :url url initargs)))
 
 ;;; ----------------------------------------------------
 
-(defun basic-auth-string (login)
-  "Create the basic auth value for the Authorization header."
-  (let ((auth-string (format nil "~{~a:~a~}" login)))
-    (format nil "Basic ~a" (base64-encode auth-string))))
+(defun http-read-request-line (http)
+  "Read the method, path, and protocol from a stream."
+  (let ((line (read-line http nil "")))
+    (let ((match (match-re #r"(%u+)%s+([^%s]+)%s+HTTP/([^%s]+)" line)))
+      (when match
+        (values-list (match-groups match))))))
 
 ;;; ----------------------------------------------------
 
-(defun open-http-stream (req &key timeout)
-  "Open a TCP stream to a given URL."
-  (let ((url (req-url req)))
-    (make-socket
-     :remote-host (url-domain url)
-     :remote-port (url-port url)
-     :auto-close t
-     :format :bivalent
-     :connect-timeout timeout
-     :input-timeout timeout
-     :output-timeout timeout
-     :keepalive (req-keep-alive req))))
+(defun http-read-request (http)
+  "Read from a stream into a request."
+  (multiple-value-bind (method path protocol)
+      (http-read-request-line http)
+    (when method
+      (let* ((headers (http-read-headers http))
+
+             ;; get the headers needed to define the request
+             (host (http-header headers "Host"))
+             (connection (http-header headers "Connection"))
+             (content-length (http-header headers "Content-Length"))
+
+             ;; combine the host and path for the url
+             (url (concatenate 'string host path))
+
+             ;; determine if the connection should be kept alive
+             (keep-alive (string-equal connection "keep-alive"))
+
+             ;; get calculate the length of the body to read
+             (n (when content-length
+                  (parse-integer content-length :junk-allowed t)))
+
+             ;; read the body of the request
+             (body (when (and n (plusp n))
+                     (http-read-content http n))))
+
+        ;; create the request
+        (http-make-request url
+                           :method method
+                           :protocol protocol
+                           :keep-alive keep-alive
+                           :headers (http-headers headers)
+                           :body (http-decode body headers))))))
 
 ;;; ----------------------------------------------------
 
-(defun send-http-request (stream req)
+(defun http-write-request (req http)
   "Write the request to the HTTP socket."
-  (with-slots (url method headers data keep-alive)
+  (with-slots (method url protocol headers body keep-alive)
       req
 
     ;; send the formal http request line
-    (let* ((path (url-path url))
-           (query (url-query url))
-           (fragment (url-fragment url)))
+    (format http "~a ~a HTTP/~a" method (url-request-path url) protocol)
 
-      ;; write the HTTP request method
-      (format stream
-              "~a ~a~@[?~:{~a=~/url:url-format/~:^&~}~]~@[#~a~] HTTP/1.1"
-              method
-              path
-              query
-              fragment)
+    ;; ready for the headers
+    (write-char #\return http)
+    (write-char #\linefeed http)
 
-      ;; ready for the headers
-      (write-char #\return stream)
-      (write-char #\linefeed stream))
+    ;; if sending a body, encode it
+    (let ((bytes (when body
+                   (http-encode body req))))
 
-    ;; always send the host as it should be
-    (write-http-header stream "Host" (url-domain url))
+      ;; update the headers with the most recent information
+      (setf (http-header req "Host")
+            (url-domain url)
 
-    ;; write default headers
-    (unless (assoc "Accept" headers :test #'string=)
-      (write-http-header stream "Accept" "*/*"))
-    (unless (assoc "User-Agent" headers :test #'string=)
-      (write-http-header stream "User-Agent" "lisp"))
-    (unless (assoc "Connection" headers :test #'string=)
-      (write-http-header stream "Connection" (if keep-alive
-                                                "keep-alive"
-                                              "close")))
+            ;; accept all registered content encodings
+            (http-header req "Accept-Encoding")
+            (http-registered-content-encodings)
 
-    ;; send the content length if there is content
-    (when data
-      (write-http-header stream "Content-Length" (length data)))
+            ;; if the URL has basic authorization, add it
+            (http-header req "Authorization")
+            (url-basic-auth url)
 
-    ;; optionally send basic auth if in the url
-    (let ((auth (url-auth url)))
-      (when auth
-        (write-http-header stream "Authorization" (basic-auth-string auth))))
+            ;; set the length of the encoded body
+            (http-header req "Content-Length")
+            (length bytes)
 
-    ;; send all the headers
-    (dolist (header headers)
-      (write-http-header stream (first header) (second header)))
+            ;; should the connection close or remain open?
+            (http-header req "Connection")
+            (format nil "~:[close~;keep-alive~]" keep-alive))
 
-    ;; complete the request
-    (write-http-header stream nil)
 
-    ;; write optional data to the body
-    (when data
-      (write-sequence data stream))
+      ;; send all the headers
+      (http-write-headers req http)
+
+      ;; write optional data to the body
+      (when bytes
+        (write-sequence bytes http)))
 
     ;; send all data
-    (force-output stream)))
-
-;;; ----------------------------------------------------
-
-(defun http-perform (req &optional stream)
-  "Perform a generic HTTP request, return the response."
-  (unwind-protect
-       (progn
-         (unless stream
-           (setf stream (open-http-stream req)))
-
-         ;; issue the request
-         (send-http-request stream req)
-
-         ;; parse the response
-         (let ((resp (read-http-response stream req)))
-           (prog1 resp
-             (with-headers ((connection "Connection"))
-               resp
-               (when (string-equal connection "close")
-                 (close stream))))))
-
-    ;; if the request doesn't want to keep the socket open, close it
-    (unless (req-keep-alive req)
-      (close stream))))
-
-;;; ----------------------------------------------------
-
-(defun http-follow-request (resp)
-  "Create a new request for a redirect response."
-  (when (<= 300 (resp-code resp) 399)
-    (let* ((req (resp-request resp))
-           (url (req-url req))
-
-           ;; get the target location
-           (loc (http-header resp "Location"))
-
-           ;; the redirect location might be relative (to the domain)
-           (new-url (url-parse loc :relative-url url)))
-
-      ;; create the new request - keep the same method unless a 303
-      (make-instance 'request
-                     :url new-url
-                     :keep-alive (req-keep-alive req)
-                     :read-body (req-read-body req)
-                     :data (req-data req)
-                     :headers (http-headers req)
-                     :method (if (= (resp-code resp) 303)
-                                 "GET"
-                               (req-method req))))))
-
-;;; ----------------------------------------------------
-
-(defun http-follow (resp &key (redirect-limit 3))
-  "Create a response redirect."
-  (loop
-     while (plusp redirect-limit)
-
-     ;; if the response requires a redirect, follow it
-     do (if (find (resp-code resp) '(301 302 303 304 305 307))
-            (let ((req (http-follow-request resp)))
-              (setf resp (http-perform req))
-              (decf redirect-limit))
-          (loop-finish))
-
-     ;; quit returning the last response
-     finally (return resp)))
-
-;;; ----------------------------------------------------
-
-(defun http-get (url &rest args &key (redirect-limit 3) &allow-other-keys)
-  "Perform a GET request for a URL, return the response."
-  (let ((req (apply #'make-instance 'request :url url args)))
-    (http-follow (http-perform req) :redirect-limit redirect-limit)))
-
-;;; ----------------------------------------------------
-
-(defun http-head (url &rest args)
-  "Perform a HEAD request for a URL, return the response."
-  (apply #'http-get url :method "HEAD" :read-body nil args))
-
-;;; ----------------------------------------------------
-
-(defun http-options (url &rest args)
-  "Perform an OPTIONS request for a URL, return the response."
-  (apply #'http-get url :method "OPTIONS" args))
-
-;;; ----------------------------------------------------
-
-(defun http-trace (url &rest args)
-  "Perform an TRACE request for a URL, return the response."
-  (apply #'http-get url :method "TRACE" args))
-
-;;; ----------------------------------------------------
-
-(defun http-delete (url &rest args)
-  "Perform a DELETE request for a URL, return the response."
-  (apply #'http-get url :method "DELETE" args))
-
-;;; ----------------------------------------------------
-
-(defun http-put (url &rest args)
-  "Perform a PUT request for a URL, return the response."
-  (apply #'http-get url :method "PUT" args))
-
-;;; ----------------------------------------------------
-
-(defun http-post (url &rest args)
-  "Perform a POST request for a URL, return the response."
-  (apply #'http-get url :method "POST" args))
-
-;;; ----------------------------------------------------
-
-(defun http-patch (url &rest args)
-  "Perform a PATCH request for a URL, return the response."
-  (apply #'http-get url :method "PATCH" args))
+    (force-output http)))
