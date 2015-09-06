@@ -1,12 +1,9 @@
-# HTTP Client/Server for ClozureCL
+# HTTP Interface for ClozureCL
 
 The `http` package is a simple package used for performing HTTP requests and parsing the responses. In addition, it has built-in support for keep-alive requests, and [HTTP server-sent events](http://www.w3.org/TR/2011/WD-eventsource-20111020/).
 
-In addition to being a good HTTP client, it also comes with a good HTTP server. It will handle parse incoming HTTP requests, route them, and return responses. The server is multi-threaded, has sessions built-in, and allows for HTTP continuations as well.
-
 The `http` package requiresthe following packages:
 
-* [SHA1](http://github.com/massung/sha1)
 * [PARSE](http://github.com/massung/parse)
 * [RE](http://github.com/massung/re)
 * [LEXER](http://github.com/massung/lexer)
@@ -181,9 +178,5 @@ The *event-callback* should be a function that takes 3 parameters when called: t
     CL-USER > (flet ((process-event (type id data)
                        (format t "New event: ~s ~s ~s~%" type id data)))
                 (http-open-event-stream "url.com" #'process-events))
-
-## Creating an HTTP Server
-
-*Coming soon...*
 
 That's it!

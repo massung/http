@@ -18,7 +18,7 @@
 ;;;;
 
 (defpackage :http
-  (:use :cl :ccl :sha1 :parse :re :lexer :url)
+  (:use :cl :ccl :parse :re :lexer :url)
   (:export
 
    ;; macros
@@ -87,19 +87,7 @@
    #:resp-code
    #:resp-status
    #:resp-body
-   #:resp-request
-
-   ;; server functions
-   #:http-simple-server
-
-   ;; base server configuration class
-   #:http-server-config
-
-   ;; routers
-   #:define-http-router
-
-   ;; continuations
-   #:http-make-continuation))
+   #:resp-request))
 
 (in-package :http)
 
