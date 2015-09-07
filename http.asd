@@ -17,5 +17,6 @@
                (:file "content-type")
                (:file "request")
                (:file "response")
+               (:file "status")
                (:file "event-stream"))
   :depends-on ("sha1" "parse" "re" "url"))

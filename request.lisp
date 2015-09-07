@@ -41,6 +41,15 @@
 
 ;;; ----------------------------------------------------
 
+(defmethod cookie-push ((cookie cookie) (req request))
+  "Add a header to the headers of a request or response."
+  (with-slots (key value atts)
+      cookie
+    (let ((str (format nil "~a=~s~:{; ~a=~s~}" key value atts)))
+      (push (list "Cookie" str) (http-headers req)))))
+
+;;; ----------------------------------------------------
+
 (defun http-make-request (url &rest initargs)
   "Create a new HTTP request."
   (with-url (url url)

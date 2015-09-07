@@ -29,13 +29,6 @@
 
 ;;; ----------------------------------------------------
 
-(defmethod print-object ((cookie cookie) stream)
-  "Output a cookie to a stream."
-  (print-unreadable-object (cookie stream :type t)
-    (format stream "~a=~s" (cookie-key cookie) (cookie-value cookie))))
-
-;;; ----------------------------------------------------
-
 (defun cookie-attribute (cookie att)
   "Lookup an attribute in the cookie."
   (with-slots (atts)
@@ -90,7 +83,7 @@
                          (.ret (list att value))))))
 
     ;; create a cookie with a key, value, and attributes
-    (.ret (make-instance 'cookie :key key :value value :attributes atts))))
+    (.ret (http-make-cookie key value :attributes atts))))
 
 ;;; ----------------------------------------------------
 
@@ -102,9 +95,5 @@
 
 ;;; ----------------------------------------------------
 
-(defun cookie-push (cookie headers &optional (header "Set-Cookie"))
-  "Add a header to the headers of a request or response."
-  (with-slots (key value atts)
-      cookie
-    (let ((str (format nil "~a=~s~:{; ~a=~s~}" key value atts)))
-      (push (list header str) (http-headers headers)))))
+(defgeneric cookie-push (cookie headers)
+  (:documentation "Subclass responsibility, Cookie or Set-Cookie."))

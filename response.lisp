@@ -39,6 +39,15 @@
 
 ;;; ----------------------------------------------------
 
+(defmethod cookie-push ((cookie cookie) (resp response))
+  "Add a header to the headers of a request or response."
+  (with-slots (key value atts)
+      cookie
+    (let ((str (format nil "~a=~s~:{; ~a=~s~}" key value atts)))
+      (push (list "Set-Cookie" str) (http-headers resp)))))
+
+;;; ----------------------------------------------------
+
 (defmethod (setf resp-body) :after (body (resp response))
   "Update the headers with the content length of the body."
   (setf (http-header resp "Content-Length") (length body)))

@@ -29,7 +29,7 @@
    #:http-open-stream
    #:http-open-event-stream
 
-   ;; content type functions
+   ;; content type class and functions
    #:content-type-parse
    #:content-type-push
    #:content-type-text-p
@@ -39,13 +39,17 @@
    #:content-type-parameters
    #:content-type-parameter
 
-   ;; cookie functions
+   ;; cookie class and functions
    #:cookie-parse
    #:cookie-push
    #:cookie-key
    #:cookie-value
    #:cookie-attributes
    #:cookie-attribute
+
+   ;; creating content-types and cookies
+   #:http-make-content-type
+   #:http-make-cookie
 
    ;; header functions
    #:http-headers
@@ -95,6 +99,22 @@
 
 (deftype octet () '(unsigned-byte 8))
 (deftype octet-vector () '(vector octet))
+
+;;; ----------------------------------------------------
+
+(defun http-make-content-type (type subtype &key format parameters)
+  "Make a content-type that can be pushed to a request/response."
+  (make-instance 'content-type
+                 :type type
+                 :subtype subtype
+                 :format format
+                 :parameters parameters))
+
+;;; ----------------------------------------------------
+
+(defun http-make-cookie (key value &key attributes)
+  "Create a cookie that can be pushed to a request/response."
+  (make-instance 'cookie :key key :value value :attributes attributes))
 
 ;;; ----------------------------------------------------
 

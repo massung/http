@@ -21,16 +21,12 @@
 
 ;;; ----------------------------------------------------
 
-(defstruct content-type
-  "MIME type and optional parameters."
-  (mime-type "application")
-  (mime-subtype "octet-stream")
-
-  ;; optional subtype format
-  (subtype-format nil)
-
-  ;; extra key/value pairs
-  (parameters nil))
+(defclass content-type ()
+  ((type       :initarg :type       :accessor content-type-mime-type)
+   (subtype    :initarg :subtype    :accessor content-type-mime-subtype)
+   (format     :initarg :format     :accessor content-type-mime-format)
+   (parameters :initarg :parameters :accessor content-type-parameters))
+  (:documentation "MIME type and optional parameters."))
 
 ;;; ----------------------------------------------------
 
@@ -81,7 +77,10 @@
                            (.ret (list key value))))))
 
     ;; create a new content-type and return it
-    (.ret (list type format params))))
+    (.ret (http-make-content-type (first type)
+                                  (second type)
+                                  :format format
+                                  :parameters params))))
 
 ;;; ----------------------------------------------------
 
@@ -89,24 +88,20 @@
   "Parse a string and return the content type."
   (with-lexer (lexer 'content-type-lexer str)
     (with-token-reader (next-token lexer)
-      (destructuring-bind ((type subtype) format parameters)
-          (parse 'content-type-parser next-token)
-        (make-content-type :mime-type type
-                           :mime-subtype subtype
-                           :subtype-format format
-                           :parameters parameters)))))
+      (parse 'content-type-parser next-token))))
 
 ;;; ----------------------------------------------------
 
 (defun content-type-push (content-type headers)
   "Outputs the content-type to a header object."
-  (with-slots (mime-type mime-subtype parameters)
-      content-type
-    (setf (http-header headers "Content-Type")
-          (format nil "~a/~a~:{;~a=~s~}"
-                  mime-type
-                  mime-subtype
-                  parameters))))
+  (let ((str (with-slots (type subtype format parameters)
+                 content-type
+               (format nil "~a/~a~@[+~a~]~:{; ~a=~s~}"
+                       type
+                       subtype
+                       format
+                       parameters))))
+    (setf (http-header headers "Content-Type") str)))
 
 ;;; ----------------------------------------------------
 
