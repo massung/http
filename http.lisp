@@ -41,6 +41,7 @@
 
    ;; cookie class and functions
    #:cookie-parse
+   #:cookie-parse-all
    #:cookie-push
    #:cookie-key
    #:cookie-value

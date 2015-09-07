@@ -104,9 +104,9 @@
            (encoding (http-header headers "Content-Encoding"))
 
            ;; parse the content type header, or use the HTTP default
-           (content-type (if header
-                             (content-type-parse header)
-                           (make-content-type))))
+           (content-type (if (null header)
+                             *octet-stream*
+                           (content-type-parse header))))
 
       ;; encode the body into octets
       (http-encode-body body encoding content-type))))
@@ -120,9 +120,9 @@
            (encoding (http-header headers "Content-Encoding"))
 
            ;; parse the content type header, or use the HTTP default
-           (content-type (if header
-                             (content-type-parse header)
-                           (make-content-type))))
+           (content-type (if (null header)
+                             *octet-stream*
+                           (content-type-parse header))))
 
       ;; decode the body
       (http-decode-body body encoding content-type))))

@@ -39,12 +39,7 @@
 
 ;;; ----------------------------------------------------
 
-(defmethod cookie-push ((cookie cookie) (resp response))
-  "Add a header to the headers of a request or response."
-  (with-slots (key value atts)
-      cookie
-    (let ((str (format nil "~a=~s~:{; ~a=~s~}" key value atts)))
-      (push (list "Set-Cookie" str) (http-headers resp)))))
+(defmethod cookie-header ((resp response)) "Set-Cookie")
 
 ;;; ----------------------------------------------------
 

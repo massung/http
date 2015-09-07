@@ -30,6 +30,11 @@
 
 ;;; ----------------------------------------------------
 
+(defparameter *octet-stream*
+  (http-make-content-type "application" "octet-stream"))
+
+;;; ----------------------------------------------------
+
 (defconstant +text-subtypes+
   '("atom"
     "javascript"
@@ -107,13 +112,13 @@
 
 (defun content-type-text-p (content-type)
   "T if the content-type is binary, NIL if text."
-  (with-slots (mime-type mime-subtype)
+  (with-slots (type subtype)
       content-type
-    (cond ((string-equal mime-type "text") t)
+    (cond ((string-equal type "text") t)
 
           ;; various application formats are text
-          ((string-equal mime-type "application")
-           (member mime-subtype +text-subtypes+ :test #'string-equal)))))
+          ((string-equal type "application")
+           (member subtype +text-subtypes+ :test #'string-equal)))))
 
 ;;; ----------------------------------------------------
 

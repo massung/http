@@ -29,6 +29,11 @@
 
 ;;; ----------------------------------------------------
 
+(defgeneric cookie-header (headers)
+  (:documentation "Cookie for request and Set-Cookie for response."))
+
+;;; ----------------------------------------------------
+
 (defun cookie-attribute (cookie att)
   "Lookup an attribute in the cookie."
   (with-slots (atts)
@@ -95,5 +100,16 @@
 
 ;;; ----------------------------------------------------
 
-(defgeneric cookie-push (cookie headers)
-  (:documentation "Subclass responsibility, Cookie or Set-Cookie."))
+(defun cookie-parse-all (headers)
+  "Find all the cookies and parse them all."
+  (let ((h (cookie-header headers)))
+    (mapcar #'cookie-parse (http-header headers h :all t))))
+
+;;; ----------------------------------------------------
+
+(defun cookie-push (cookie headers)
+  "Add a header to the headers of a request or response."
+  (with-slots (key value atts)
+      cookie
+    (let ((str (format nil "~a=~s~:{; ~a=~s~}" key value atts)))
+      (push (list (cookie-header headers) str) (http-headers headers)))))
