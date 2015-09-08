@@ -68,17 +68,19 @@
   ("^%s*([^%s=]+)" (values :key $$))
 
   ;; cookie values are optional
-  ("%s*=%s*(?\"(.-)\"|([^,;]+))" (values :value $1))
+  ("%s*=%s*(?\"(.-)\"|([^;]+))" (values :value $1))
 
   ;; all other names are a cookie's attributes
-  ("[,;]%s*([^%s,;=]+)" (values :att $1)))
+  ("[;]%s*([^%s;=]+)" (values :att $1)))
 
 ;;; ----------------------------------------------------
 
 (define-parser cookie-parser
   "Parse a Set-Cookie response header."
   (.let* ((key (.is :key))
-          (value (.is :value))
+
+          ;; values are optional
+          (value (.opt nil (.is :value)))
 
           ;; attributes are optional
           (atts (.many (.let* ((att (.is :att))
