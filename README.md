@@ -61,19 +61,19 @@ Be sure and close the sockets when you are done!
 
 Both `request` and `response` objects derive from the same base class: `headers`. The `http-headers` accessor method can be used to both extract and set the headers of a request or response.
 
-  CL-USER > (http-headers (http-get "www.google.com"))
-  (("Location" "http://www.google.com/")
-   ("Content-Type" "text/html; charset=UTF-8")
-   ("Date" "Thu, 10 Apr 2014 18:08:21 GMT")
-   ("Expires" "Sat, 10 May 2014 18:08:21 GMT")
-   ("Cache-Control" "public, max-age=2592000")
-   ("Server" "gws")
-   ("Content-Length" "219")
-   ("X-XSS-Protection" "1; mode=block")
-   ("X-Frame-Options" "SAMEORIGIN")
-   ("Alternate-Protocol" "80:quic")
-   ("Connection" "close")
-   ...)
+    CL-USER > (http-headers (http-get "www.google.com"))
+    (("Location" "http://www.google.com/")
+     ("Content-Type" "text/html; charset=UTF-8")
+     ("Date" "Thu, 10 Apr 2014 18:08:21 GMT")
+     ("Expires" "Sat, 10 May 2014 18:08:21 GMT")
+     ("Cache-Control" "public, max-age=2592000")
+     ("Server" "gws")
+     ("Content-Length" "219")
+     ("X-XSS-Protection" "1; mode=block")
+     ("X-Frame-Options" "SAMEORIGIN")
+     ("Alternate-Protocol" "80:quic")
+     ("Connection" "close")
+     ...)
 
 The `http-header` method can be used to extract a single header from a request or response.
 
@@ -179,4 +179,4 @@ The *event-callback* should be a function that takes 3 parameters when called: t
                        (format t "New event: ~s ~s ~s~%" type id data)))
                 (http-open-event-stream "url.com" #'process-events))
 
-That's it!
+## That's all, folks!
