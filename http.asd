@@ -18,5 +18,11 @@
                (:file "request")
                (:file "response")
                (:file "status")
-               (:file "event-stream"))
+               (:file "event-stream")
+
+               ;; server files
+               (:file "uuid")
+               (:file "session")
+               (:file "server")
+               (:file "router"))
   :depends-on ("sha1" "parse" "re" "url"))
