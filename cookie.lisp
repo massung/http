@@ -42,23 +42,22 @@
 
 ;;; ----------------------------------------------------
 
+(defun cookie-attribute-set (cookie att value)
+  "Add a new query parameter or update an existing one."
+
+  (prog1 value
+    (with-slots (atts)
+        cookie
+      (let ((q (assoc att atts :test #'string-equal)))
+        (if q
+            (rplacd q (list value))
+          (push (list att value) atts))))))
+
+;;; ----------------------------------------------------
+
 (defsetf cookie-attribute (cookie att) (value)
   "Add or change the value of a content-type parameter."
-  (let ((place (gensym))
-        (a (gensym))
-        (as (gensym))
-        (new-value (gensym)))
-    `(with-slots ((,as atts))
-         ,cookie
-       (let* ((,a ,att)
-              (,new-value ,value)
-
-              ;; lookup the parameter
-              (,place (assoc ,a ,as :test #'string-equal)))
-         (prog1 ,new-value
-           (if ,place
-               (setf (second ,place) (princ-to-string ,new-value))
-             (push (list ,a (princ-to-string ,new-value)) ,as)))))))
+  `(http::cookie-attribute-set ,cookie ,att ,value))
 
 ;;; ----------------------------------------------------
 

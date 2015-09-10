@@ -130,23 +130,21 @@
 
 ;;; ----------------------------------------------------
 
+(defun content-type-parameter-set (content-type param value)
+  "Set the value of a parameter in the content-type."
+  (prog1 value
+    (with-slots (parameters)
+        content-type
+      (let ((q (assoc param parameters :test #'string-equal)))
+        (if q
+            (rplacd q (list value))
+          (push (list param value) parameters))))))
+
+;;; ----------------------------------------------------
+
 (defsetf content-type-parameter (content-type param) (value)
   "Add or change the value of a content-type parameter."
-  (let ((place (gensym))
-        (p (gensym))
-        (ps (gensym))
-        (new-value (gensym)))
-    `(with-slots ((,ps parameters))
-         ,content-type
-       (let* ((,p ,param)
-              (,new-value ,value)
-
-              ;; lookup the parameter
-              (,place (assoc ,p ,ps :test #'string-equal)))
-         (prog1 ,new-value
-           (if ,place
-               (setf (second ,place) (princ-to-string ,new-value))
-             (push (list ,p (princ-to-string ,new-value)) ,ps)))))))
+  `(http::content-type-parameter-set ,content-type ,param ,value))
 
 ;;; ----------------------------------------------------
 
