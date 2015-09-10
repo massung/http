@@ -21,27 +21,45 @@
 
 ;;; ----------------------------------------------------
 
-(defun http-uuid-gen (&optional resp)
-  "Generate a unique ID from local IP, time, and a random number."
-  (let ((ip4 (if (null resp)
-                 #x7f000001 ; localhost
-               (remote-host (resp-stream resp))))
+(defun http-guid-gen (&optional resp)
+  "Generate a globally unique ID from IP, time, and a random number."
+  (let ((d (with-output-to-vector (v)
 
-        ;; get the current time and a random number
-        (time (get-universal-time))
-        (rnd (random (ash 1 64)))
+             ;; add the IP address of the client
+             (let ((ipv4  (if (null resp)
+                              #x7f000001 ; localhost
+                            (remote-host (resp-stream resp)))))
+               (unsigned-integer-to-binary ipv4 4 v))
 
-        ;; this is where all the bytes will go
-        (digest (make-array 16 :element-type 'http::octet :fill-pointer 0)))
+             ;; add the time to the digest
+             (unsigned-integer-to-binary (get-universal-time) 4 v)
 
-    ;; insert the local ip into the digest
-    (dotimes (i 4) (vector-push (ldb (byte 8 (* i 8)) ip4) digest))
+             ;; add a random, 64-bit number
+             (unsigned-integer-to-binary (random #.(ash 1 64)) 8 v))))
+    (sha1-hex d)))
 
-    ;; insert the universal time into the digest
-    (dotimes (i 4) (vector-push (ldb (byte 8 (* i 8)) time) digest))
+;;; ----------------------------------------------------
 
-    ;; insert the random number into the digest
-    (dotimes (i 8) (vector-push (ldb (byte 8 (* i 8)) rnd) digest))
+(defun http-luid-gen (&optional session)
+  "Generate a locally unique ID from a session, time, and random number."
+  (let* ((*random-state* (if (null session)
+                             *random-state*
+                           (session-random-state session)))
 
-    ;; return a hashed version of the digest
-    (sha1-hex digest)))
+         ;; the process id is unique for each request
+         (pid (process-serial-number *current-process*))
+
+         ;; the current time
+         (time (get-universal-time))
+
+         ;; generate the unique ID
+         (n (logior (dpb time (byte 32 0) 0)
+
+                    ;; add the process id, which is unique per request
+                    (dpb pid (byte 12 0) 32)
+
+                    ;; and a 28-bit random number at upper bits
+                    (dpb (random #.(ash 1 28)) (byte 30 44) 0))))
+
+    ;; convert the number to a base-36 string
+    (format nil "~36r" n)))

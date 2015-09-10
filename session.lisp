@@ -93,7 +93,7 @@
   (let* ((*random-state* (session-random-state session))
 
          ;; generate a unique identifier for this continuation
-         (id (http-uuid-gen resp))
+         (id (http-luid-gen session))
 
          ;; get the target destination with the continuation
          (path (url-path (req-url (resp-request resp))))
@@ -109,8 +109,17 @@
                               :arguments args
                               :time (get-universal-time))))
 
-    ;; add the continuation to the session
-    (push cont (session-continuations session))
+    ;; add the continuation, remove old continuations
+    (setf (session-continuations session)
+          (loop
+             for c in (session-continuations session)
+
+             ;; only keep up to 20 continuations
+             for i below 20
+             collect c into keep-list
+
+             ;; make sure the new continuation is at the front
+             finally (return (cons cont keep-list))))
 
     ;; return the url that will be used as the return link
     (continuation-url cont)))

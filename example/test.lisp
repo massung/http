@@ -8,8 +8,6 @@
 ;;; -- First, define all the basic routes.
 
 (define-http-router example-router
-
-  ;; Seaside counter example page
   (:get "/counter" 'counter))
 
 ;;; -- Evaluate this to get the server going.
@@ -24,7 +22,7 @@
 
   ;; create a continuation link
   (flet ((href (n)
-           (http-make-continuation session resp #'counter n)))
+           (http-make-continuation session resp 'counter n)))
 
     ;; generate the response body
     (let ((page (<html>
@@ -33,7 +31,8 @@
                  (<body>
                   (<h1> n)
                   (<hr>)
-                  (<a> :href (href (1+ n)) "++")
-                  #\space
-                  (<a> :href (href (1- n)) "--")))))
+                  (<code>
+                   (<a> :href (href (1+ n)) "++")
+                   #\space
+                   (<a> :href (href (1- n)) "--"))))))
       (http-ok resp (html-render page)))))
