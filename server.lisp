@@ -21,9 +21,10 @@
 
 ;;; ----------------------------------------------------
 
-(defclass http-server-config ()
+(defclass server-config ()
   ((process-name    :initarg :name            :initform "HTTP")
    (port            :initarg :port            :initform 8000)
+   (public-folder   :initarg :public-folder   :initform nil)
    (session-class   :initarg :session-class   :initform 'http-session)
    (session-timeout :initarg :session-timeout :initform 10)
    (not-found       :initarg :not-found-route :initform nil)
@@ -32,18 +33,34 @@
 
 ;;; ----------------------------------------------------
 
-(defun http-start-server (router &rest initargs &key name &allow-other-keys)
+(defmethod initialize-instance :after ((config server-config) &key)
+  "Make sure all the settings are valid."
+  (with-slots (public-folder)
+      config
+    (when public-folder
+      (setf public-folder
+            (or (probe-file public-folder)
+                (warn "Invalid public folder ~s..." public-folder))))))
+
+;;; ----------------------------------------------------
+
+(defun http-start-server (router &rest initargs)
   "Start a server process that will process incoming HTTP requests."
-  (let* ((config (apply 'make-instance 'http-server-config initargs))
+  (let* ((config (apply 'make-instance 'server-config initargs)))
+    (with-slots (port process-name)
+        config
 
-         ;; create a server socket using the configuration
-         (sock (make-socket :type :stream
-                            :connect :passive
-                            :reuse-address t
-                            :local-port (slot-value config 'port))))
+      ;; create the server socket
+      (let ((sock (make-socket :type :stream
+                               :connect :passive
+                               :reuse-address t
+                               :local-port port)))
 
-    ;; start the server process
-    (process-run-function name 'http-server-loop sock router config)))
+        ;; start the server process
+        (process-run-function process-name 'http-server-loop
+                              sock
+                              router
+                              config)))))
 
 ;;; ----------------------------------------------------
 
@@ -74,15 +91,21 @@
                                     session-lock))
 
             ;; remove old sessions from the map
-            (flet ((timeout (sid session)
-                     (let ((time (session-time session)))
-                       (when (http-timed-out-p config time)
-                         (remhash sid session-map)))))
-              (with-write-lock (session-lock)
-                (maphash #'timeout session-map))))
+            (http-timeout-sessions session-map session-lock config))
 
       ;; server process finished
       (close socket))))
+
+;;; ----------------------------------------------------
+
+(defun http-timeout-sessions (session-map session-lock config)
+  "Remove old sessions from the session map."
+  (let ((time-limit (slot-value config 'timeout)))
+    (flet ((timeout (sid session)
+             (when (http-session-timed-out-p session time-limit)
+               (remhash sid session-map))))
+      (with-write-lock (session-lock)
+        (maphash #'timeout session-map)))))
 
 ;;; ----------------------------------------------------
 
@@ -132,6 +155,9 @@
       config
     (handler-case
 
+        ;; is the request path in the public folder
+        ;(let ((path (http-public-file-p config (resp-request resp))))
+
         ;; look for a continuation route
         (let ((cont (http-find-continuation session resp)))
           (if cont
@@ -153,8 +179,10 @@
 
 ;;; ----------------------------------------------------
 
-(defun http-timed-out-p (config time)
-  "T if the time passed in is beyond the timeout period."
-  (with-slots (session-timeout)
+(defun http-public-file-p (config resp)
+  "Pathname to public file if valid, otherwise NIL."
+  (with-slots (public-folder)
       config
-    (< (+ time (* session-timeout 60)) (get-universal-time))))
+    (when public-folder
+      (let ((path (url-path (req-url (resp-request resp)))))
+        (probe-file (merge-pathnames (subseq path 1) public-folder))))))

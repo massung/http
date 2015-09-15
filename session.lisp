@@ -44,7 +44,7 @@
 
 (defun http-make-session (resp config)
   "Create a new session and add the cookie to the response."
-  (let ((sid (http-uuid-gen resp)))
+  (let ((sid (http-guid-gen resp)))
 
     ;; create a cookie and add it to the response
     (cookie-push (http-make-cookie "_s" sid) resp)
@@ -70,6 +70,12 @@
 
      ;; lookup the session and return it
      return (cookie-value cookie)))
+
+;;; ----------------------------------------------------
+
+(defun http-session-timed-out-p (session timeout)
+  "T if the session is too old and should be timed out."
+  (> (- (get-universal-time) (session-time session)) (* timeout 60)))
 
 ;;; ----------------------------------------------------
 

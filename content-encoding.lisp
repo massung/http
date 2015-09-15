@@ -105,7 +105,7 @@
 
            ;; parse the content type header, or use the HTTP default
            (content-type (if (null header)
-                             *octet-stream*
+                             *application/octet-stream*
                            (content-type-parse header))))
 
       ;; encode the body into octets
@@ -121,7 +121,7 @@
 
            ;; parse the content type header, or use the HTTP default
            (content-type (if (null header)
-                             *octet-stream*
+                             *application/octet-stream*
                            (content-type-parse header))))
 
       ;; decode the body

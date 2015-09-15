@@ -33,6 +33,7 @@
    #:content-type-parse
    #:content-type-push
    #:content-type-text-p
+   #:content-type-of-pathname
    #:content-type-external-format
    #:content-type-mime-type
    #:content-type-mime-subtype
