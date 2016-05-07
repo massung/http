@@ -100,7 +100,7 @@
 
 (defun http-timeout-sessions (session-map session-lock config)
   "Remove old sessions from the session map."
-  (let ((time-limit (slot-value config 'timeout)))
+  (let ((time-limit (slot-value config 'session-timeout)))
     (flet ((timeout (sid session)
              (when (http-session-timed-out-p session time-limit)
                (remhash sid session-map))))
