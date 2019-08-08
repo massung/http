@@ -18,7 +18,7 @@
 ;;;;
 
 (defpackage :http
-  (:use :cl :sb-ext :sb-bsd-sockets :sb-alien :sb-thread :sha1 :parse :re :lexer :tls :url)
+  (:use :cl :sb-ext :sb-bsd-sockets :sb-alien :sb-thread :sha1 :re :lexer :tls :url)
   (:export
 
    ;; macros
