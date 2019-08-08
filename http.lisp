@@ -1,4 +1,4 @@
-;;;; HTTP interface for ClozureCL
+;;;; HTTP interface for SBCL
 ;;;;
 ;;;; Copyright (c) Jeffrey Massung
 ;;;;
@@ -18,7 +18,7 @@
 ;;;;
 
 (defpackage :http
-  (:use :cl :ccl :sha1 :parse :re :lexer :url)
+  (:use :cl :sb-ext :sb-bsd-sockets :sb-alien :sb-thread :sha1 :parse :re :lexer :tls :url)
   (:export
 
    ;; macros
@@ -82,6 +82,7 @@
    ;; request accessors
    #:req-protocol
    #:req-url
+   #:req-ssl-p
    #:req-method
    #:req-body
    #:req-keep-alive
@@ -103,7 +104,46 @@
    #:define-http-router
 
    ;; sessions and continuations
-   #:http-make-continuation))
+   #:http-make-continuation
+
+   ;; response code return functions
+   #:http-continue
+   #:http-switching-protocols
+   #:http-ok
+   #:http-created
+   #:http-accepted
+   #:http-non-authoritative
+   #:http-no-content
+   #:http-reset-content
+   #:http-partial-content
+   #:http-moved-permanently
+   #:http-found
+   #:http-see-other
+   #:http-not-modified
+   #:http-temporary-redirect
+   #:http-bad-request
+   #:http-unauthorized
+   #:http-forbidden
+   #:http-not-found
+   #:http-method-not-allowed
+   #:http-not-acceptable
+   #:http-proxy-required
+   #:http-request-timeout
+   #:http-conflict
+   #:http-gone
+   #:http-length-required
+   #:http-precondition-failed
+   #:http-request-too-large
+   #:http-request-uri-too-long
+   #:http-unsupported-media-type
+   #:http-range-not-satisfiable
+   #:http-expectation-failed
+   #:http-internal-server-error
+   #:http-not-implemented
+   #:http-bad-gateway
+   #:http-service-unavailable
+   #:http-gateway-timeout
+   #:http-version-not-supported))
 
 (in-package :http)
 
@@ -132,15 +172,24 @@
 
 (defun http-open-stream (req &key timeout)
   "Open a TCP stream to a given URL."
-  (let ((url (req-url req)))
-    (make-socket :remote-host (url-domain url)
-                 :remote-port (url-port url)
-                 :auto-close t
-                 :format :bivalent
-                 :connect-timeout timeout
-                 :input-timeout timeout
-                 :output-timeout timeout
-                 :keepalive (req-keep-alive req))))
+  (let* ((url (req-url req))
+         (host (url-domain url))
+         (port (url-port url)))
+
+    ;; if the request requires ssl, then create a tls stream
+    (if (req-ssl-p req)
+        (make-tls-stream host port)
+      (let ((address (host-ent-address (get-host-by-name host)))
+            (sock (make-instance 'inet-socket :type :stream :protocol :tcp)))
+        (setf (sockopt-keep-alive sock) (req-keep-alive req))
+
+        ;; open the connection
+        (socket-connect sock address port)
+        (socket-make-stream sock
+                            :element-type :default
+                            :output t
+                            :input t
+                            :timeout timeout)))))
 
 ;;; ----------------------------------------------------
 

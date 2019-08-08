@@ -1,4 +1,4 @@
-;;;; HTTP interface for ClozureCL
+;;;; HTTP interface for SBCL
 ;;;;
 ;;;; Copyright (c) Jeffrey Massung
 ;;;;
@@ -86,8 +86,8 @@
 (defun http-decode-body (body encoding content-type)
   "Decode a response or request body."
   (let* ((decoder (if (null encoding)
-                     #'identity
-                   (http-registered-content-decoder encoding)))
+                      #'identity
+                    (http-registered-content-decoder encoding)))
 
          ;; first, decode the body's bytes (e.g. gunzip)
          (bytes (funcall decoder body)))

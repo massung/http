@@ -1,12 +1,13 @@
-# HTTP Interface for ClozureCL
+# HTTP Interface for SBCL
 
-The `http` package is a simple package used for performing HTTP requests and parsing the responses. In addition, it has built-in support for keep-alive requests, and [HTTP server-sent events](http://www.w3.org/TR/2011/WD-eventsource-20111020/).
+The `http` package is a simple package used for performing HTTP requests and parsing the responses. In addition, it has built-in support for keep-alive requests, and [HTTP server-sent events](http://www.w3.org/TR/2011/WD-eventsource-20111020/). It also contains server request routing, session, and session continuation code similar to [Seaside](http://seaside.st/).
 
 The `http` package requiresthe following packages:
 
 * [PARSE](http://github.com/massung/parse)
 * [RE](http://github.com/massung/re)
 * [LEXER](http://github.com/massung/lexer)
+* [TLS](http://github.com/massung/tls)
 * [URL](http://github.com/massung/url)
 
 Other packages that are very useful in addition (but not required) are:
@@ -178,5 +179,43 @@ The *event-callback* should be a function that takes 3 parameters when called: t
     CL-USER > (flet ((process-event (type id data)
                        (format t "New event: ~s ~s ~s~%" type id data)))
                 (http-open-event-stream "url.com" #'process-events))
+
+## HTTP Server
+
+_Warning: The server code is a work-in-progress and may not be functional right now._
+
+When combined with the [HTML](http://github.com/massung/html) package, the `http` package can be a pretty descent server as well. It's not very full-featured, but if you just need something simple and that generates dynamic content with code, then it might be all you need.
+
+### Starting the Server
+
+Before we can start the server, we need to define a router:
+
+    CL-USER > (define-http-router my-routes
+                (:get "/" #'(lambda (session resp &rest args)
+                              (http-ok resp "Hello, world!"))))
+
+Once you've defined your router, you can then start the server with it:
+
+    CL-USER > (http-start-server 'my-routes)
+    #<SB-THREAD:THREAD "HTTP" RUNNING {1002EF2A43}>
+
+It takes other, keyword arguments besides a router, but we'll start with just the router for now.
+
+Let's test it real quick:
+
+    CL-USER > (http-get "localhost:8000")
+    #<HTTP::RESPONSE 200 "OK">
+
+    CL-USER > (resp-body *)
+    "Hello, world!"
+
+And, now let's stop the server.
+
+    CL-USER > (http-stop-server)
+    (#<SB-THREAD:THREAD "HTTP" RUNNING {1002EF2A43}>)
+
+## TODO:
+
+More server documentation with configuration, routing, sessions, continuations, HTML rendering, etc.
 
 ## That's all, folks!

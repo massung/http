@@ -1,4 +1,4 @@
-;;;; HTTP Interface for ClozureCL
+;;;; HTTP interface for SBCL
 ;;;;
 ;;;; Copyright (c) Jeffrey Massung
 ;;;;
@@ -23,6 +23,7 @@
 
 (defclass server-config ()
   ((process-name    :initarg :name            :initform "HTTP")
+   (address         :initarg :address         :initform #(127 0 0 1))
    (port            :initarg :port            :initform 8000)
    (public-folder   :initarg :public-folder   :initform nil)
    (session-class   :initarg :session-class   :initform 'http-session)
@@ -47,48 +48,48 @@
 (defun http-start-server (router &rest initargs)
   "Start a server process that will process incoming HTTP requests."
   (let* ((config (apply 'make-instance 'server-config initargs)))
-    (with-slots (port process-name)
+    (with-slots (address port process-name)
         config
 
       ;; create the server socket
-      (let ((sock (make-socket :type :stream
-                               :connect :passive
-                               :reuse-address t
-                               :local-port port)))
+      (let ((sock (make-instance 'inet-socket :type :stream :protocol :tcp)))
+        (socket-bind sock address port)
+        (socket-listen sock 20)
 
-        ;; start the server process
-        (process-run-function process-name 'http-server-loop
-                              sock
-                              router
-                              config)))))
+        ;; start accepting incoming connections
+        (make-thread #'http-server-loop
+                     :name process-name
+                     :arguments (list sock router config))))))
 
 ;;; ----------------------------------------------------
 
 (defun http-stop-server (&optional (name "HTTP"))
   "Find the server process and kill it."
   (let ((ps (remove name
-                    (all-processes)
+                    (list-all-threads)
                     :test-not #'string=
-                    :key #'process-name)))
+                    :key #'thread-name)))
 
     ;; kill any process with the same name as the server
-    (mapc #'process-kill ps)))
+    (mapc #'terminate-thread ps)))
 
 ;;; ----------------------------------------------------
 
 (defun http-server-loop (socket router config)
   "Infinite loop, accepting new connections and routing them."
   (let ((session-map (make-hash-table :test 'equal))
-        (session-lock (make-read-write-lock)))
+        (session-lock (make-mutex)))
     (unwind-protect
          (loop
-            (let ((http (accept-connection socket :wait t)))
-              (process-run-function "Request" 'http-process-request
-                                    http
-                                    router
-                                    config
-                                    session-map
-                                    session-lock))
+            (multiple-value-bind (connection address)
+                (socket-accept socket)
+              (make-thread #'http-process-request
+                           :name (format nil "Request from ~a" address)
+                           :arguments (list connection
+                                            router
+                                            config
+                                            session-map
+                                            session-lock)))
 
             ;; remove old sessions from the map
             (http-timeout-sessions session-map session-lock config))
@@ -104,21 +105,22 @@
     (flet ((timeout (sid session)
              (when (http-session-timed-out-p session time-limit)
                (remhash sid session-map))))
-      (with-write-lock (session-lock)
+      (with-mutex (session-lock)
         (maphash #'timeout session-map)))))
 
 ;;; ----------------------------------------------------
 
-(defun http-process-request (http router config session-map session-lock)
+(defun http-process-request (socket router config session-map session-lock)
   "Process a single HTTP request and send a response."
-  (let ((resp (http-make-response http)))
+  (let* ((http (socket-make-stream socket :output t :input t))
+         (resp (http-make-response http)))
     (if resp
         (let* ((req (resp-request resp))
 
                ;; lookup the session from the request
                (session (let ((sid (http-read-session-id req)))
                           (when sid
-                            (with-read-lock (session-lock)
+                            (with-mutex (session-lock)
                               (gethash sid session-map))))))
 
           ;; if there's no session, make a new one
@@ -127,7 +129,7 @@
                 (setf session (http-make-session resp config))
 
               ;; add the session to the session map
-              (with-write-lock (session-lock)
+              (with-mutex (session-lock)
                 (setf (gethash id session-map) session))))
 
           ;; refresh the session with a new timestamp
@@ -142,10 +144,10 @@
             ;; close the connection unless the server wants it alive
             (let ((connection (http-header resp "Connection")))
               (unless (string-equal connection "keep-alive")
-                (shutdown http :direction :output)))))
+                (socket-shutdown socket :direction :output)))))
 
       ;; failed to parse the request and make a response, just quit
-      (close http))))
+      (close socket))))
 
 ;;; ----------------------------------------------------
 

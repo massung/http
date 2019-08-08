@@ -1,4 +1,4 @@
-;;;; Simple HTTP Server for ClozureCL
+;;;; HTTP interface for SBCL
 ;;;;
 ;;;; Copyright (c) Jeffrey Massung
 ;;;;

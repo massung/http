@@ -1,4 +1,4 @@
-;;;; HTTP Interface for ClozureCL
+;;;; HTTP interface for SBCL
 ;;;;
 ;;;; Copyright (c) Jeffrey Massung
 ;;;;
@@ -25,8 +25,6 @@
   ((id    :initarg :id           :accessor session-id)
    (time  :initarg :time         :accessor session-time)
    (rng   :initarg :random-state :accessor session-random-state)
-
-   ;; each session maintains a list of continuations
    (conts :initform nil          :accessor session-continuations))
   (:documentation "A unique ID for each client connection."))
 
@@ -42,9 +40,15 @@
 
 ;;; ----------------------------------------------------
 
+(defun random-uid ()
+  "Generates a 128-bit, random UID."
+  (string-downcase (format nil "~36r" (random (ash 1 128)))))
+
+;;; ----------------------------------------------------
+
 (defun http-make-session (resp config)
   "Create a new session and add the cookie to the response."
-  (let ((sid (http-guid-gen resp)))
+  (let ((sid (random-uid)))
 
     ;; create a cookie and add it to the response
     (cookie-push (http-make-cookie "_s" sid) resp)
@@ -99,7 +103,7 @@
   (let* ((*random-state* (session-random-state session))
 
          ;; generate a unique identifier for this continuation
-         (id (http-luid-gen session))
+         (id (random-uid))
 
          ;; get the target destination with the continuation
          (path (url-path (req-url (resp-request resp))))

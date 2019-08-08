@@ -21,8 +21,7 @@
                (:file "event-stream")
 
                ;; server files
-               (:file "uuid")
                (:file "session")
-               (:file "server")
-               (:file "router"))
-  :depends-on ("sha1" "parse" "re" "url"))
+               (:file "router")
+               (:file "server"))
+  :depends-on ("sha1" "parse" "re" "tls" "url"))

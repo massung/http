@@ -1,4 +1,4 @@
-;;;; HTTP interface for ClozureCL
+;;;; HTTP interface for SBCL
 ;;;;
 ;;;; Copyright (c) Jeffrey Massung
 ;;;;
@@ -25,6 +25,7 @@
   ((method     :initarg :method     :initform "GET" :accessor req-method)
    (protocol   :initarg :protocol   :initform "1.0" :accessor req-protocol)
    (url        :initarg :url        :initform nil   :accessor req-url)
+   (ssl-p      :initarg :ssl-p      :initform nil   :accessor req-ssl-p)
    (keep-alive :initarg :keep-alive :initform nil   :accessor req-keep-alive)
    (read-body  :initarg :read-body  :initform t     :accessor req-read-body)
    (body       :initarg :body       :initform nil   :accessor req-body))
@@ -48,7 +49,8 @@
 (defun http-make-request (url &rest initargs)
   "Create a new HTTP request."
   (with-url (url url)
-    (apply 'make-instance 'request :url url initargs)))
+    (let ((ssl-p (string-equal (url-scheme url) "https")))
+      (apply 'make-instance 'request :url url :ssl-p ssl-p initargs))))
 
 ;;; ----------------------------------------------------
 

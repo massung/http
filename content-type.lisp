@@ -1,4 +1,4 @@
-;;;; HTTP interface for ClozureCL
+;;;; HTTP interface for SBCL
 ;;;;
 ;;;; Copyright (c) Jeffrey Massung
 ;;;;
@@ -237,7 +237,7 @@
 
 ;;; ----------------------------------------------------
 
-(defconstant +text-subtypes+
+(defparameter *text-mime-subtypes*
   '("atom"
     "javascript"
     "json"
@@ -320,7 +320,7 @@
 
           ;; various application formats are text
           ((string-equal type "application")
-           (member subtype +text-subtypes+ :test #'string-equal)))))
+           (member subtype *text-mime-subtypes* :test #'string-equal)))))
 
 ;;; ----------------------------------------------------
 
@@ -409,4 +409,4 @@
   "Use a content type to decode bytes into a string."
   (when (content-type-text-p content-type)
     (let ((format (content-type-external-format content-type)))
-      (decode-string-from-octets bytes :external-format format))))
+      (octets-to-string bytes :external-format format))))
