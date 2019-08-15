@@ -401,7 +401,7 @@
   (if (not (content-type-text-p content-type))
       str  ; assumed to be binary already!
     (let ((format (content-type-external-format content-type)))
-      (encode-string-to-octets str :external-format format))))
+      (string-to-octets str :external-format format))))
 
 ;;; ----------------------------------------------------
 
