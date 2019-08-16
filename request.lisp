@@ -135,7 +135,6 @@
             (http-header req "Connection")
             (format nil "~:[close~;keep-alive~]" keep-alive))
 
-
       ;; send all the headers
       (http-write-headers req http)
 

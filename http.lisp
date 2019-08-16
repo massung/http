@@ -234,15 +234,14 @@
            (new-url (url-parse loc :relative-url url)))
 
       ;; create the new request - keep the same method unless a 303
-      (make-instance 'request
-                     :url new-url
-                     :keep-alive (req-keep-alive req)
-                     :read-body (req-read-body req)
-                     :body (req-body req)
-                     :headers (http-headers req)
-                     :method (if (= (resp-code resp) 303)
-                                 "GET"
-                               (req-method req))))))
+      (http-make-request new-url
+                         :keep-alive (req-keep-alive req)
+                         :read-body (req-read-body req)
+                         :body (req-body req)
+                         :headers (http-headers req)
+                         :method (if (= (resp-code resp) 303)
+                                     "GET"
+                                   (req-method req))))))
 
 ;;; ----------------------------------------------------
 
