@@ -8,7 +8,7 @@
   :version "1.0"
   :author "Jeffrey Massung"
   :license "Apache 2.0"
-  :description "HTTP interface for ClozureCL."
+  :description "HTTP interface for SBCL."
   :serial t
   :components ((:file "http")
                (:file "headers")
