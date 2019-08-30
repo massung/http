@@ -57,21 +57,7 @@
         (socket-listen sock 20)
 
         ;; start accepting incoming connections
-        (make-thread #'http-server-loop
-                     :name process-name
-                     :arguments (list sock router config))))))
-
-;;; ----------------------------------------------------
-
-(defun http-stop-server (&optional (name "HTTP"))
-  "Find the server process and kill it."
-  (let ((ps (remove name
-                    (list-all-threads)
-                    :test-not #'string=
-                    :key #'thread-name)))
-
-    ;; kill any process with the same name as the server
-    (mapc #'terminate-thread ps)))
+        (http-server-loop sock router config)))))
 
 ;;; ----------------------------------------------------
 
@@ -112,7 +98,10 @@
 
 (defun http-process-request (socket router config session-map session-lock)
   "Process a single HTTP request and send a response."
-  (let* ((http (socket-make-stream socket :output t :input t))
+  (let* ((http (socket-make-stream socket
+                                   :output t
+                                   :input t
+                                   :element-type :default))
          (resp (http-make-response http)))
     (if resp
         (let* ((req (resp-request resp))

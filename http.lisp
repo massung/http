@@ -96,12 +96,11 @@
    #:resp-body
    #:resp-request
 
-   ;; server functions
-   #:http-start-server
-   #:http-stop-server
-
    ;; route macros
    #:define-http-router
+
+   ;; server functions
+   #:http-start-server
 
    ;; sessions and continuations
    #:http-make-continuation
