@@ -191,28 +191,14 @@ When combined with the [HTML](http://github.com/massung/html) package, the `http
 Before we can start the server, we need to define a router:
 
     CL-USER > (define-http-router my-routes
-                (:get "/" #'(lambda (session resp &rest args)
-                              (http-ok resp "Hello, world!"))))
+                (:get "/" #'(lambda (&rest args)
+                              (http-ok "Hello, world!"))))
 
 Once you've defined your router, you can then start the server with it:
 
     CL-USER > (http-start-server 'my-routes)
-    #<SB-THREAD:THREAD "HTTP" RUNNING {1002EF2A43}>
 
-It takes other, keyword arguments besides a router, but we'll start with just the router for now.
-
-Let's test it real quick:
-
-    CL-USER > (http-get "localhost:8000")
-    #<HTTP::RESPONSE 200 "OK">
-
-    CL-USER > (resp-body *)
-    "Hello, world!"
-
-And, now let's stop the server.
-
-    CL-USER > (http-stop-server)
-    (#<SB-THREAD:THREAD "HTTP" RUNNING {1002EF2A43}>)
+It takes other, keyword arguments besides a router, but we'll start with just the router for now. To test it, just open your browser to `localhost:8000` and see the response.
 
 ## TODO:
 

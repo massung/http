@@ -23,22 +23,23 @@
 
 (defmacro define-http-status (reply code (&key status headers))
   "Create an HTTP response generation."
-  (let ((resp (gensym "resp"))
-        (body (gensym "body"))
+  (let ((body (gensym "body"))
 
         ;; create an argument for each required header
         (args (mapcar #'gensym headers)))
     `(eval-when (:compile-toplevel :load-toplevel :execute)
-       (defun ,reply (,resp ,@args &optional ,body)
-         (setf (resp-code ,resp) ,code
-               (resp-status ,resp) ,status
+       (defun ,reply (,@args &optional ,body)
+         (setf (resp-code *response*) ,code
+               (resp-status *response*) ,status
 
                ;; set the headers from the arguments passed in
-               ,@(loop for a in args and h in headers appending
-                      `((http-header ,resp ,h) ,a))
+               ,@(loop
+                    for a in args
+                    and h in headers
+                    appending `((http-header *response* ,h) ,a))
 
                ;; set the body if it was provided
-               (resp-body ,resp) ,body))
+               (resp-body *response*) ,body))
        (export ',reply :http))))
 
 ;;; ----------------------------------------------------

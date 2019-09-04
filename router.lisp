@@ -23,19 +23,17 @@
 
 (defmacro define-http-router (router &body routes)
   "Define a simple router function."
-  (let ((resp (gensym "resp"))
-        (session (gensym "session")))
-    (labels ((try-routes (r rs)
-               (when r
-                 `(if ,(apply #'http-make-route session resp r)
-                      t
-                    ,(try-routes (first rs) (rest rs))))))
-      `(defun ,router (,session ,resp)
-         ,(try-routes (first routes) (rest routes))))))
+  (labels ((try-routes (r rs)
+             (when r
+               `(if ,(apply #'http-make-route r)
+                    t
+                  ,(try-routes (first rs) (rest rs))))))
+    `(defun ,router ()
+       ,(try-routes (first routes) (rest routes)))))
 
 ;;; ----------------------------------------------------
 
-(defun http-make-route (session resp method path-spec handler)
+(defun http-make-route (method path-spec handler)
   "Create a path router that will call a handler function on match."
   (let ((okp (gensym "okp"))
         (args (gensym "args"))
@@ -60,12 +58,12 @@
                                 (t path)))))
 
     ;; match the method and path-spec, call the handler function
-    `(let ((,req (resp-request ,resp)))
+    `(let ((,req (resp-request *response*)))
        (when (string-equal (req-method ,req) ,method)
          (multiple-value-bind (,args ,okp)
              (http-path-equal ',plist (url-path (req-url ,req)))
            (when ,okp
-             (apply ,handler ,session ,resp ,args)))))))
+             (apply ,handler ,args)))))))
 
 ;;; ----------------------------------------------------
 

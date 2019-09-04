@@ -46,15 +46,15 @@
 
 ;;; ----------------------------------------------------
 
-(defun http-make-session (resp config)
+(defun http-make-session ()
   "Create a new session and add the cookie to the response."
   (let ((sid (random-uid)))
 
     ;; create a cookie and add it to the response
-    (cookie-push (http-make-cookie "_s" sid) resp)
+    (cookie-push (http-make-cookie "_s" sid) *response*)
 
     ;; create the session instance from the configuration
-    (let ((session-class (slot-value config 'session-class)))
+    (let ((session-class (slot-value *server-config* 'session-class)))
       (make-instance session-class
                      :id sid
                      :time (get-universal-time)
@@ -77,36 +77,36 @@
 
 ;;; ----------------------------------------------------
 
-(defun http-session-timed-out-p (session timeout)
+(defun http-session-timed-out-p (timeout)
   "T if the session is too old and should be timed out."
-  (> (- (get-universal-time) (session-time session)) (* timeout 60)))
+  (> (- (get-universal-time) (session-time *session*)) (* timeout 60)))
 
 ;;; ----------------------------------------------------
 
-(defun http-find-continuation (session resp)
+(defun http-find-continuation ()
   "Find a continuation in a given session for a request."
-  (let* ((url (req-url (resp-request resp)))
+  (let* ((url (req-url (resp-request *response*)))
 
          ;; lookup the continuation id in the query
          (_k (url-query-param url "_k"))
 
          ;; fetch all the continuations for this session
-         (conts (session-continuations session)))
+         (conts (session-continuations *session*)))
 
     ;; lookup the continuation by id
     (find _k conts :test #'string= :key #'continuation-id)))
 
 ;;; ----------------------------------------------------
 
-(defun http-make-continuation (session resp route &rest args)
+(defun http-make-continuation (route &rest args)
   "Create a new route continuation in a session for a given path."
-  (let* ((*random-state* (session-random-state session))
+  (let* ((*random-state* (session-random-state *session*))
 
          ;; generate a unique identifier for this continuation
          (id (random-uid))
 
          ;; get the target destination with the continuation
-         (path (url-path (req-url (resp-request resp))))
+         (path (url-path (req-url (resp-request *response*))))
 
          ;; create a local url path as the href
          (url (url-parse path :query `(("_k" ,id))))
@@ -120,9 +120,9 @@
                               :time (get-universal-time))))
 
     ;; add the continuation, remove old continuations
-    (setf (session-continuations session)
+    (setf (session-continuations *session*)
           (loop
-             for c in (session-continuations session)
+             for c in (session-continuations *session*)
 
              ;; only keep up to 20 continuations
              for i below 20

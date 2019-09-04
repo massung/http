@@ -45,19 +45,26 @@
 
 ;;; ----------------------------------------------------
 
-(defun http-start-server (router &rest initargs)
+(defvar *server-config*)
+(defvar *session*)
+(defvar *response*)
+
+;;; ----------------------------------------------------
+
+(defun http-start-server (router &key (config (make-instance 'server-config)))
   "Start a server process that will process incoming HTTP requests."
-  (let* ((config (apply 'make-instance 'server-config initargs)))
-    (with-slots (address port process-name)
-        config
+  (with-slots (address port process-name)
+      config
 
-      ;; create the server socket
-      (let ((sock (make-instance 'inet-socket :type :stream :protocol :tcp)))
-        (socket-bind sock address port)
-        (socket-listen sock 20)
+    ;; create the server socket
+    (let ((sock (make-instance 'inet-socket :type :stream :protocol :tcp)))
+      (socket-bind sock address port)
+      (socket-listen sock 20)
 
-        ;; start accepting incoming connections
-        (http-server-loop sock router config)))))
+      ;; start accepting incoming connections
+      (unwind-protect
+           (http-server-loop sock router config)
+        (socket-close sock)))))
 
 ;;; ----------------------------------------------------
 
@@ -65,23 +72,37 @@
   "Infinite loop, accepting new connections and routing them."
   (let ((session-map (make-hash-table :test 'equal))
         (session-lock (make-mutex)))
-    (unwind-protect
+    (loop
+       (let ((conn (make-thread #'http-accept-connection
+                                :name "HTTP Server accept"
+                                :arguments (list socket
+                                                 router
+                                                 config
+                                                 session-map
+                                                 session-lock))))
+
+         ;; periodically see if should listen for new connection
          (loop
-            (multiple-value-bind (connection address)
-                (socket-accept socket)
-              (make-thread #'http-process-request
-                           :name (format nil "Request from ~a" address)
-                           :arguments (list connection
-                                            router
-                                            config
-                                            session-map
-                                            session-lock)))
+            until (join-thread conn :default nil :timeout 0)
+            do (thread-yield))
 
-            ;; remove old sessions from the map
-            (http-timeout-sessions session-map session-lock config))
+         ;; remove old sessions from the map
+         (http-timeout-sessions session-map session-lock config)))))
 
-      ;; server process finished
-      (close socket))))
+;;; ----------------------------------------------------
+
+(defun http-accept-connection (socket router config session-map session-lock)
+  "Wait forever for a new connection, then spawn a thread to handle it."
+  (multiple-value-bind (connection address)
+      (ignore-errors (socket-accept socket))
+    (when connection
+      (make-thread #'http-process-request
+                   :name (format nil "Request from ~a" address)
+                   :arguments (list connection
+                                    router
+                                    config
+                                    session-map
+                                    session-lock)))))
 
 ;;; ----------------------------------------------------
 
@@ -89,7 +110,8 @@
   "Remove old sessions from the session map."
   (let ((time-limit (slot-value config 'session-timeout)))
     (flet ((timeout (sid session)
-             (when (http-session-timed-out-p session time-limit)
+             (when (let ((*session* session))
+                     (http-session-timed-out-p time-limit))
                (remhash sid session-map))))
       (with-mutex (session-lock)
         (maphash #'timeout session-map)))))
@@ -102,9 +124,12 @@
                                    :output t
                                    :input t
                                    :element-type :default))
-         (resp (http-make-response http)))
-    (if resp
-        (let* ((req (resp-request resp))
+
+         ;; set global config and create the response object
+         (*server-config* config)
+         (*response* (http-make-response http)))
+    (if *response*
+        (let* ((req (resp-request *response*))
 
                ;; lookup the session from the request
                (session (let ((sid (http-read-session-id req)))
@@ -115,7 +140,7 @@
           ;; if there's no session, make a new one
           (unless session
             (with-slots (id)
-                (setf session (http-make-session resp config))
+                (setf session (http-make-session))
 
               ;; add the session to the session map
               (with-mutex (session-lock)
@@ -126,47 +151,47 @@
 
           ;; route the response, then send the response back
           (unwind-protect
-               (progn
-                 (http-route-response resp session router config)
-                 (http-write-response resp))
+               (let ((*session* session))
+                 (http-route-response router)
+                 (http-write-response *response*))
 
             ;; close the connection unless the server wants it alive
-            (let ((connection (http-header resp "Connection")))
+            (let ((connection (http-header *response* "Connection")))
               (unless (string-equal connection "keep-alive")
                 (socket-shutdown socket :direction :output)))))
 
       ;; failed to parse the request and make a response, just quit
-      (close socket))))
+      (socket-close socket))))
 
 ;;; ----------------------------------------------------
 
-(defun http-route-response (resp session router config)
+(defun http-route-response (router)
   "Attempt to route the request to the appropriate handler."
   (with-slots (not-found server-error)
-      config
+      *server-config*
     (handler-case
 
         ;; is the request path in the public folder
         ;(let ((path (http-public-file-p config (resp-request resp))))
 
         ;; look for a continuation route
-        (let ((cont (http-find-continuation session resp)))
+        (let ((cont (http-find-continuation)))
           (if cont
               (with-slots (route args)
                   cont
-                (apply route session resp args))
+                (apply route args))
 
             ;; attempt to use the route function to handle the response
-            (unless (funcall router session resp)
+            (unless (funcall router)
               (if not-found
-                  (funcall not-found session resp)
-                (http-not-found resp)))))
+                  (funcall not-found)
+                (http-not-found)))))
 
       ;; conditions trigger a server error
       (condition (c)
         (if server-error
-            (funcall server-error session resp c)
-          (http-internal-server-error resp (princ-to-string c)))))))
+            (funcall server-error c)
+          (http-internal-server-error (princ-to-string c)))))))
 
 ;;; ----------------------------------------------------
 

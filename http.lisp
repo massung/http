@@ -96,6 +96,14 @@
    #:resp-body
    #:resp-request
 
+   ;; server config base class
+   #:server-config
+
+   ;; server special variables
+   #:*server-config*
+   #:*session*
+   #:*response*
+
    ;; route macros
    #:define-http-router
 
