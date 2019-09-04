@@ -182,16 +182,16 @@ The *event-callback* should be a function that takes 3 parameters when called: t
 
 ## HTTP Server
 
-_Warning: The server code is a work-in-progress and may not be functional right now._
+The `http` package can be a pretty descent server as well. It supports basic routing, multi-threading, configuration, session management, continuations, and more.
 
-When combined with the [HTML](http://github.com/massung/html) package, the `http` package can be a pretty descent server as well. It's not very full-featured, but if you just need something simple and that generates dynamic content with code, then it might be all you need.
+_NOTE: All of the examples below require use of the [HTML](http://github.com/massung/html) package._
 
-### Starting the Server
+### Quick Example Server
 
 Before we can start the server, we need to define a router:
 
     CL-USER > (define-http-router my-routes
-                (:get "/" #'(lambda (&rest args)
+                (:get "/" #'(lambda ()
                               (http-ok "Hello, world!"))))
 
 Once you've defined your router, you can then start the server with it:
@@ -200,8 +200,118 @@ Once you've defined your router, you can then start the server with it:
 
 It takes other, keyword arguments besides a router, but we'll start with just the router for now. To test it, just open your browser to `localhost:8000` and see the response.
 
-## TODO:
+### Server Routes
 
-More server documentation with configuration, routing, sessions, continuations, HTML rendering, etc.
+Each server route is essentially made up of the following:
+
+* a method
+* a path
+* a function
+
+The method should be a string or keyword for the HTTP method this route responds to (e.g. `:GET` or `:POST`).
+
+The path is the request path for the response. It may contain keywords, which will end up being passed to the route's function (e.g. `"/user/:user"`).
+
+The function takes any of the arguments in the path as keyword arguments and uses the dynamic variables for the `*server-config*`, `*session*`, and `*response*` to generate the successful response body or error.
+
+Example:
+
+```lisp
+(define-http-router reddit-clone
+  (:get "/top"             'handle-top-posts)
+  (:post "/submit"         'handle-submit-post)
+  (:get  "/user/:username" 'handle-user-lookup))
+
+(defun handle-top-posts ()
+  (http-ok (render-top-posts)))
+
+(defun handle-submit-post ()
+  (let* ((req (resp-request *response*))
+         (post (req-body req)))
+    (create-post *session* post)
+    (http-ok)))
+
+(defun handle-user-lookup (&key username)
+  (let ((user (find-user username)))
+    (if user
+        (http-ok (render-user user))
+      (http-not-found))))
+```
+
+This shows some extra use of `*session*` for the current user session data, as well as the `*response*` object being constructed (to get the request). It also shows use of a keyword argument in a route function defined by the path.
+
+## Server Configuration
+
+Each server - when started - requires a configuration object that is a subclass of `server-config`. If one isn't provided then a default configuration is used. During the handling of routes, the `*server-config*` variable will be available for use.
+
+Since each request is processed in a separate thread, any "global" data you'd like to share among all routes should be stored in the server config. For example, maybe you're hosting a blog server and need a database connection that all routes can use:
+
+```lisp
+(defclass blog-config (server-config)
+  ((db-conn :initarg :db :accessor blog-db)))
+
+(define-http-router blog-router
+  (:get "/post/:id" 'render-post))
+
+(defun render-post (&key id)
+  (let ((db (blog-db *server-config*)))
+    (http-ok (lookup-post db id))))
+
+(defun start-blog-server (db-connection)
+  (let ((config (make-instance 'blog-config :db db-connection)))
+    (http-start-server 'blog-router :config config)))
+```
+
+### Sessions
+
+Each unique user connecting to your server is given a session object that is a subclass of `http-session`. This class can be specified in the `server-config` object if you wanted anything unique tied to the session (e.g. a user ID).
+
+```lisp
+(defclass my-session (http-session)
+  ((user-id :initform nil :accessor session-user-id)))
+
+(defun start-server ()
+  (let ((config (make-instance 'server-config :session-class 'my-session))
+    (http-start-server 'my-router :config config))))
+```
+
+_NOTE: Keep in mind that when a session is created, you won't be able to pass any arguments to it. So either use `:initform` to initialize members or create an `initialize-instance` method for your session class._
+
+Along with the `:session-class` is also a `:session-timeout`, which is the number of minutes the session is valid for. The session is refreshed each time the user requests another page.
+
+If you do not want sessions, simply set the `:session-class` to `nil` and no session objects will be created.
+
+### Continuations
+
+The HTTP server module is a continuation-based server (see: [Seaside](http://seaside.st/)). Each session tracks all the continuations available to it. This can be very handy for passing dynamic content between pages through links.
+
+```lisp
+(define-http-router counter-router
+  (:get "/" 'counter))
+
+(defun counter (&optional (n 0))
+  (flet ((next-number (n)
+           (http-make-continuation 'counter n)))
+    (http-ok
+     (html-render
+      (<html>
+       (<body>
+        (<h1> n)
+        (<hr>)
+        (<code>
+         (<a> :href (next-number (1+ n)) "++")
+         #\space
+         (<a> :href (next-number (1- n)) "--"))))))))
+```
+
+Try it out!
+
+You definitely aren't required to use continuations in your server, but they can be incredibly useful. For example, consider a REST API used to query a database and you'd like to support paginated requests. With continuations, you can return both the current results as well as a link that's able to be used to get the next page of results.
+
+_NOTE: Using continuations completely by-passes the router! This can be used to great effect. For example, you can create "routes" that are impossible to reach without having a session and gone through a very specific path of code._
+
+## TODO
+
+Even More Features...
 
 ## That's all, folks!

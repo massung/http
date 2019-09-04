@@ -64,16 +64,18 @@
 
 (defun http-read-session-id (req)
   "Search the Cookie headers in the request for a session id."
-  (loop
+  (or (with-url (url (req-url req))
+        (url-query-param url "_s"))
 
-     ;; search all the Cookie headers
-     for cookie in (cookie-parse-all req)
+      ;; if not there, check if it's in a cookie
+      (loop
+         for cookie in (cookie-parse-all req)
 
-     ;; is this the session id cookie?
-     when (string-equal (cookie-key cookie) "_s")
+         ;; is this the session id cookie?
+         when (string-equal (cookie-key cookie) "_s")
 
-     ;; lookup the session and return it
-     return (cookie-value cookie)))
+         ;; lookup the session and return it
+         return (cookie-value cookie))))
 
 ;;; ----------------------------------------------------
 
@@ -103,17 +105,19 @@
   (let* ((*random-state* (session-random-state *session*))
 
          ;; generate a unique identifier for this continuation
-         (id (random-uid))
+         (sess-id (session-id *session*))
+         (cont-id (random-uid))
 
          ;; get the target destination with the continuation
          (path (url-path (req-url (resp-request *response*))))
 
          ;; create a local url path as the href
-         (url (url-parse path :query `(("_k" ,id))))
+         (url (url-parse path :query `(("_s" ,sess-id)
+                                       ("_k" ,cont-id))))
 
          ;; create the continuation
          (cont (make-instance 'http-continuation
-                              :id id
+                              :id cont-id
                               :url url
                               :route route
                               :arguments args
