@@ -55,10 +55,11 @@
 
     ;; create the session instance from the configuration
     (let ((session-class (slot-value *server-config* 'session-class)))
-      (make-instance session-class
-                     :id sid
-                     :time (get-universal-time)
-                     :random-state (make-random-state t)))))
+      (when session-class
+        (make-instance session-class
+                       :id sid
+                       :time (get-universal-time)
+                       :random-state (make-random-state t))))))
 
 ;;; ----------------------------------------------------
 
@@ -87,53 +88,55 @@
 
 (defun http-find-continuation ()
   "Find a continuation in a given session for a request."
-  (let* ((url (req-url (resp-request *response*)))
+  (when *session*
+    (let* ((url (req-url (resp-request *response*)))
 
-         ;; lookup the continuation id in the query
-         (_k (url-query-param url "_k"))
+           ;; lookup the continuation id in the query
+           (_k (url-query-param url "_k"))
 
-         ;; fetch all the continuations for this session
-         (conts (session-continuations *session*)))
+           ;; fetch all the continuations for this session
+           (conts (session-continuations *session*)))
 
-    ;; lookup the continuation by id
-    (find _k conts :test #'string= :key #'continuation-id)))
+      ;; lookup the continuation by id
+      (find _k conts :test #'string= :key #'continuation-id))))
 
 ;;; ----------------------------------------------------
 
 (defun http-make-continuation (route &rest args)
   "Create a new route continuation in a session for a given path."
-  (let* ((*random-state* (session-random-state *session*))
+  (when *session*
+    (let* ((*random-state* (session-random-state *session*))
 
-         ;; generate a unique identifier for this continuation
-         (sess-id (session-id *session*))
-         (cont-id (random-uid))
+           ;; generate a unique identifier for this continuation
+           (sess-id (session-id *session*))
+           (cont-id (random-uid))
 
-         ;; get the target destination with the continuation
-         (path (url-path (req-url (resp-request *response*))))
+           ;; get the target destination with the continuation
+           (path (url-path (req-url (resp-request *response*))))
 
-         ;; create a local url path as the href
-         (url (url-parse path :query `(("_s" ,sess-id)
-                                       ("_k" ,cont-id))))
+           ;; create a local url path as the href
+           (url (url-parse path :query `(("_s" ,sess-id)
+                                         ("_k" ,cont-id))))
 
-         ;; create the continuation
-         (cont (make-instance 'http-continuation
-                              :id cont-id
-                              :url url
-                              :route route
-                              :arguments args
-                              :time (get-universal-time))))
+           ;; create the continuation
+           (cont (make-instance 'http-continuation
+                                :id cont-id
+                                :url url
+                                :route route
+                                :arguments args
+                                :time (get-universal-time))))
 
-    ;; add the continuation, remove old continuations
-    (setf (session-continuations *session*)
-          (loop
-             for c in (session-continuations *session*)
+      ;; add the continuation, remove old continuations
+      (setf (session-continuations *session*)
+            (loop
+               for c in (session-continuations *session*)
 
-             ;; only keep up to 20 continuations
-             for i below 20
-             collect c into keep-list
+               ;; only keep up to 40 continuations
+               for i below 40
+               collect c into keep-list
 
-             ;; make sure the new continuation is at the front
-             finally (return (cons cont keep-list))))
+               ;; make sure the new continuation is at the front
+               finally (return (cons cont keep-list))))
 
-    ;; return the url that will be used as the return link
-    (continuation-url cont)))
+      ;; return the url that will be used as the return link
+      (continuation-url cont))))

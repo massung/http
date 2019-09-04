@@ -139,15 +139,15 @@
 
           ;; if there's no session, make a new one
           (unless session
-            (with-slots (id)
-                (setf session (http-make-session))
-
-              ;; add the session to the session map
-              (with-mutex (session-lock)
-                (setf (gethash id session-map) session))))
+            (when (setf session (http-make-session))
+              (with-slots (id)
+                  session
+                (with-mutex (session-lock)
+                  (setf (gethash id session-map) session)))))
 
           ;; refresh the session with a new timestamp
-          (setf (session-time session) (get-universal-time))
+          (when session
+            (setf (session-time session) (get-universal-time)))
 
           ;; route the response, then send the response back
           (unwind-protect
