@@ -312,6 +312,7 @@ _NOTE: Using continuations completely by-passes the router! This can be used to 
 
 ## TODO
 
-Even More Features...
+* Add support for serving static files
+* Add support for SSL server
 
 ## That's all, folks!
