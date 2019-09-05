@@ -218,8 +218,4 @@
         (let* ((data (slurp pathname :element-type 'octet))
                (type (content-type-of-pathname pathname data)))
           (content-type-push type *response*)
-
-          ;; return the content
-          (http-ok (if (not (content-type-text-p type))
-                       data
-                     (content-type-decode type data))))))))
+          (http-ok data))))))

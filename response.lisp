@@ -194,7 +194,9 @@
 
     ;; send the body if present and not a HEAD request
     (when (and body req (string/= (req-method req) "HEAD"))
-      (let ((bytes (http-encode body resp)))
+      (let ((bytes (if (typep body 'octet-vector)
+                       body
+                     (http-encode body resp))))
         (write-sequence bytes http)))
 
     ;; make sure anything that has been written flushes
