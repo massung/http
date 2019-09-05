@@ -21,7 +21,7 @@
                (:file "event-stream")
 
                ;; server files
-               (:file "session")
+               (:file "server")
                (:file "router")
-               (:file "server"))
+               (:file "session"))
   :depends-on ("sb-bsd-sockets" "sha1" "parse" "re" "tls" "url"))
