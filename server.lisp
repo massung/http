@@ -25,7 +25,7 @@
   ((process-name    :initarg :name            :initform "HTTP")
    (address         :initarg :address         :initform #(127 0 0 1))
    (port            :initarg :port            :initform 8000)
-   (public-folder   :initarg :public-folder   :initform nil)
+   (public-path     :initarg :public-path     :initform nil)
    (session-class   :initarg :session-class   :initform 'http-session)
    (session-timeout :initarg :session-timeout :initform 10)
    (not-found       :initarg :not-found-route :initform nil)
@@ -36,12 +36,14 @@
 
 (defmethod initialize-instance :after ((config server-config) &key)
   "Make sure all the settings are valid."
-  (with-slots (public-folder)
+  (with-slots (public-path)
       config
-    (when public-folder
-      (setf public-folder
-            (or (probe-file public-folder)
-                (warn "Invalid public folder ~s..." public-folder))))))
+    (when public-path
+      (setf public-path
+            (let ((path (probe-file public-path)))
+              (if path
+                  path
+                (warn "Invalid public path: ~s" public-path)))))))
 
 ;;; ----------------------------------------------------
 
@@ -171,21 +173,30 @@
       *server-config*
     (handler-case
 
-        ;; is the request path in the public folder
-        ;(let ((path (http-public-file-p config (resp-request resp))))
+        ;; Process requests in the following order:
+        ;;
+        ;; 1. Check for a continuation
+        ;; 2. Try the router
+        ;; 3. Look for a public file
+        ;; 4. Use the not-found config route
+        ;; 5. Default http-not-found
 
-        ;; look for a continuation route
-        (let ((cont (http-find-continuation)))
-          (if cont
-              (with-slots (route args)
-                  cont
-                (apply route args))
+        (unless (or (let ((cont (http-find-continuation)))
+                      (when cont
+                        (with-slots (route args)
+                            cont
+                          (apply route args))))
 
-            ;; attempt to use the route function to handle the response
-            (unless (funcall router)
-              (if not-found
-                  (funcall not-found)
-                (http-not-found)))))
+                    ;; router
+                    (funcall router)
+
+                    ;; public file
+                    (http-route-public-file))
+
+          ;; resource not found
+          (if not-found
+              (funcall not-found)
+            (http-not-found)))
 
       ;; conditions trigger a server error
       (condition (c)
@@ -195,10 +206,20 @@
 
 ;;; ----------------------------------------------------
 
-(defun http-public-file-p (config resp)
-  "Pathname to public file if valid, otherwise NIL."
-  (with-slots (public-folder)
-      config
-    (when public-folder
-      (let ((path (url-path (req-url (resp-request resp)))))
-        (probe-file (merge-pathnames (subseq path 1) public-folder))))))
+(defun http-route-public-file ()
+  "Check to see if the pathname exists in the public path."
+  (with-slots (public-path)
+      *server-config*
+    (let ((pathname (when public-path
+                      (let* ((url (req-url (resp-request *response*)))
+                             (path (subseq (url-path url) 1)))
+                        (probe-file (merge-pathnames path public-path))))))
+      (when pathname
+        (let* ((data (slurp pathname :element-type 'octet))
+               (type (content-type-of-pathname pathname data)))
+          (content-type-push type *response*)
+
+          ;; return the content
+          (http-ok (if (not (content-type-text-p type))
+                       data
+                     (content-type-decode type data))))))))

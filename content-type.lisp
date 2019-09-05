@@ -44,6 +44,11 @@
 
 ;;; ----------------------------------------------------
 
+(defparameter *text/plain*
+  (http-make-content-type "text" "plain"))
+
+;;; ----------------------------------------------------
+
 (defparameter *content-types*
   `(("acx"     "application/internet-property-stream")
     ("ai"      "application/postscript")
@@ -350,15 +355,21 @@
 
 ;;; ----------------------------------------------------
 
-(defun content-type-of-pathname (pathname)
+(defun content-type-of-pathname (pathname &optional contents)
   "Using the pathname type, return a known content type."
   (let* ((type (pathname-type pathname))
 
          ;; lookup the type from the known content types
          (mime-type (assoc type *content-types* :test #'string-equal)))
-    (if mime-type
-        (apply 'content-type-parse (rest mime-type))
-      *application/octet-stream*)))
+    (cond
+      (mime-type (apply 'content-type-parse (rest mime-type)))
+
+      ;; contents have been provided, test for non-ascii
+      (contents (flet ((ascii-p (b)
+                         (or (< 31 b 128) (find b '(9 10 13)))))
+                  (if (every #'ascii-p contents)
+                      *text/plain*
+                    *application/octet-stream*))))))
 
 ;;; ----------------------------------------------------
 
