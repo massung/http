@@ -96,10 +96,5 @@
                        ;; the data field collects values with newlines
                        ((string= key "data")  (format data "~a~%" value))
 
-                       ;; set the stream reconnect time
-                       ((string= key "retry")
-                        (multiple-value-bind (n pos)
-                            (parse-integer value :junk-allowed t)
-                          (when (= (length value) pos)
-                            (setf (stream-input-timeout http) n
-                                  (stream-output-timeout http) n)))))))))))
+                       ;; set the stream reconnect time (TODO)
+                       ((string= key "retry")))))))))
