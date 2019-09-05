@@ -17,11 +17,11 @@
                (:file "content-encoding")
                (:file "request")
                (:file "response")
-               (:file "status")
                (:file "event-stream")
 
                ;; server files
                (:file "server")
+               (:file "status")
                (:file "router")
                (:file "session"))
   :depends-on ("sb-bsd-sockets" "sha1" "parse" "re" "tls" "url"))
