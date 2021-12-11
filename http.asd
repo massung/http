@@ -24,4 +24,4 @@
                (:file "status")
                (:file "router")
                (:file "session"))
-  :depends-on ("sb-bsd-sockets" "parse" "re" "tls" "url"))
+  :depends-on ("sb-bsd-sockets" "base64" "parse" "re" "tls" "url"))
